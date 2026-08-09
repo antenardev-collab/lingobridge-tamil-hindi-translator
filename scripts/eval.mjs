@@ -13,6 +13,7 @@
 
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Approximate USD->INR for the "cost per rupee" view. Not authoritative.
 const USD_INR = 88;
@@ -103,8 +104,9 @@ function replaceAllMap(text, map) {
   return out;
 }
 
-function tokenize(text) {
+export function tokenize(text) {
   let s = text.toLowerCase();
+  s = s.replace(/(\d)[,،](?=\d)/g, "$1"); // strip thousands separators: 8,000 -> 8000
   s = replaceAllMap(s, PHRASES);
   s = replaceAllMap(s, UNITS);
   s = replaceAllMap(s, DAYS);
@@ -119,7 +121,7 @@ function normalizeToken(token) {
 }
 
 /** Every mustPreserve token present (in digit or word form) in the translation. */
-function checkMustPreserve(mustPreserve, translation) {
+export function checkMustPreserve(mustPreserve, translation) {
   if (!mustPreserve || mustPreserve.length === 0) {
     return { pass: true, tokens: [], missing: [] };
   }
@@ -351,7 +353,11 @@ function writeResults(results) {
   console.log(`\nResults written to ${path}\n`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run the harness when executed directly, so the scorer (tokenize,
+// checkMustPreserve) can be imported for re-scoring without firing API calls.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
