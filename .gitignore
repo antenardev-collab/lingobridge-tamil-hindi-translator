@@ -9,3 +9,6 @@
 # Real people's voices — stays local
 test-clips/*.wav
 test-clips/*.m4a
+
+# Eval run outputs — timestamped, not worth committing
+eval-results/

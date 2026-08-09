@@ -14,11 +14,25 @@ translates without anyone touching it. We build toward that in stages.
 ## Stack
 
 - Next.js (App Router) + TypeScript, deployed on Vercel
-- All AI calls go through OpenRouter — one API key, server-side only
-- **STT + translation: a single call** to `/api/v1/chat/completions` with the
-  `input_audio` content type. Do not split into transcribe → translate steps.
-  - **`input_audio` does NOT accept webm/opus.** Accepted formats: `wav, mp3,
-    aiff, aac, ogg, flac, m4a, pcm16, pcm24` — standardize on `wav`. Android
+- Model calls are server-side only, behind Next.js route handlers. Two
+  providers, two keys: `OPENROUTER_API_KEY` and `GEMINI_API_KEY`.
+- **STT + translation: a single call** with the audio sent inline. Do not split
+  into transcribe → translate steps.
+  - **`/api/translate` is pipeline-agnostic.** We A/B two providers empirically
+    rather than guess; both return the identical validated `{ original,
+    translation }`. Configs live in `lib/models.ts`, impls in `lib/translate/`.
+    - **Pipeline A — `openrouter-single`:** one OpenRouter
+      `/api/v1/chat/completions` call, `input_audio`, format `wav`. OpenRouter
+      exposes **only** `openai/gpt-audio` and `openai/gpt-audio-mini` for chat
+      audio input — **there is no Gemini audio input via OpenRouter.**
+    - **Pipeline B — `gemini-direct`:** one Google Gemini `generateContent` call
+      with inline `audio/wav`. Default `gemini-3.1-flash-lite` (cheapest/fastest
+      audio-in Flash-Lite available to new keys; `gemini-2.5-flash-lite` is
+      cheaper but Google 404s it for new users). `gemini-3.6-flash` is the
+      quality ceiling, alternate only.
+  - **Inline audio does NOT accept webm/opus.** OpenRouter `input_audio` accepts
+    `wav, mp3, aiff, aac, ogg, flac, m4a, pcm16, pcm24`; Gemini accepts
+    `wav, mp3, aiff, aac, ogg, flac` — standardize on `wav` for both. Android
     Chrome's `MediaRecorder` produces `webm/opus`, so live capture must be
     rewritten to client-side AudioWorklet WAV encoding (16kHz mono PCM16) in
     Slice 3. **Not** server-side ffmpeg — no server audio dep, no extra latency.
@@ -64,13 +78,14 @@ silently work around it.
 
 ## Hard rules
 
-- `OPENROUTER_API_KEY` is server-side only. Never in client bundles,
-  `NEXT_PUBLIC_*` vars, or a browser `fetch`. All model calls go through
-  Next.js route handlers.
+- `OPENROUTER_API_KEY` and `GEMINI_API_KEY` are server-side only. Never in
+  client bundles, `NEXT_PUBLIC_*` vars, or a browser `fetch`. All model calls go
+  through Next.js route handlers.
 - API routes return validated, typed JSON — never raw model output. Models wrap
   JSON in markdown fences; strip and parse defensively, and fail loudly.
 - All model IDs live in `lib/models.ts`. Never hardcode a model string
-  elsewhere. Verify IDs against openrouter.ai/models — they change.
+  elsewhere. Verify IDs against openrouter.ai/models and ai.google.dev — they
+  change.
 - Mobile-first. Design and test at 390px width. Assume 4G on a noisy site.
 - Every user-facing string must exist in Tamil, Hindi, and English.
 - **`test-clips/*.wav` is gitignored.** The audio contains real people's voices

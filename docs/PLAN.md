@@ -75,6 +75,13 @@ Then the eval harness:
 > worse than tailoring ones. Support `npm run eval -- --domain=general` and
 > `-- --model=<id>` for A/B runs.
 
+**Pipeline-agnostic:** `/api/translate` runs behind a `pipeline` selector so we
+A/B two providers on real clips rather than guess. Pipeline A `openrouter-single`
+(`openai/gpt-audio-mini`) vs Pipeline B `gemini-direct` (`gemini-2.5-flash-lite`).
+Both return the identical validated shape. Eval takes `--pipeline=` alongside
+`--model=`, and records per-clip token usage + cost so we compare quality per
+rupee, not just latency. See CLAUDE.md → Stack.
+
 **Done when:** all 26 clips return sane translations and mustPreserve passes.
 Judge register by reading the output against `expectedTranslation`, not
 `expectedTranslationMeaning`.
