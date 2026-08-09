@@ -43,7 +43,11 @@ count. If you see 0 bytes, it's the mimeType.
 
 ---
 
-## Slice 2 — The translate endpoint
+## Slice 2 — The translate endpoint ✅ COMPLETE (2026-08)
+
+`/api/translate` (pipeline-agnostic) + `npm run eval` / `npm run eval:tts` shipped.
+`gemini-direct` locked as the translation pipeline, native-speaker validated both
+directions. See CLAUDE.md → Stack for the A/B and TTS findings.
 
 **Goal:** a proven core, testable without any UI.
 
@@ -94,23 +98,33 @@ two-word turns).
 
 ---
 
-## Slice 3 — Wire it up
+## Slice 3 — Live capture to the endpoint
 
-> Connect each half's button to `/api/translate` with the correct `sourceLang`.
-> Show the original on the speaker's side and the translation on the listener's
-> side, in that side's script, at large readable size. Add per-side loading and
-> error states. Translation is re-tappable to replay. Keep the raw blob in
-> session memory alongside the result.
+**The real work is the capture rewrite.** OpenRouter `input_audio` and Gemini
+inline audio both reject the `webm/opus` that Slice 1's `MediaRecorder` produces
+on Android Chrome.
 
-> **Capture rewrite (required here):** OpenRouter `input_audio` rejects the
-> `webm/opus` that Slice 1's `MediaRecorder` produces on Android Chrome. Replace
-> live capture with a client-side AudioWorklet that encodes 16kHz mono PCM16 WAV
-> — matching the `test-clips/*.wav` format — and send `format: "wav"`. Keep
-> `echoCancellation`/`noiseSuppression` on the `getUserMedia` track (upstream of
-> the worklet). Do NOT use server-side ffmpeg. See CLAUDE.md → Stack.
+> Replace live capture with a client-side AudioWorklet that encodes 16kHz mono
+> PCM16 WAV — matching the `test-clips/*.wav` format — and send `format: "wav"`.
+> Keep `echoCancellation`/`noiseSuppression` on the `getUserMedia` track
+> (upstream of the worklet). Do NOT use server-side ffmpeg. See CLAUDE.md → Stack.
 
-**Done when:** two people can hold a conversation by tapping. This is already
-usable — try it in a real shop before moving on.
+> Then wire each half's button to `/api/translate` with the correct
+> `sourceLang`. Add per-side loading and error states, and keep the raw blob in
+> session memory alongside the result (locked decision 4). On-screen
+> original/translation is a debug aid only (locked decision 6) — render it
+> minimally; do not invest in per-script typography or sizing. Spoken playback is
+> Slice 4.
+
+> **Format parity is load-bearing.** The AudioWorklet must emit the *same* format
+> the eval clips use (16kHz mono PCM16 WAV). If live capture and `test-clips/*.wav`
+> diverge, the Slice 2 eval numbers (latency, transcription quality) no longer
+> transfer to production. If the worklet output differs, re-encode the test clips
+> to match and re-run `npm run eval` to re-baseline.
+
+**Done when:** holding a button on a real Android phone captures WAV, posts to
+`/api/translate`, and returns a correct translation — verified on a Vercel
+preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
 
 ---
 
@@ -124,6 +138,49 @@ usable — try it in a real shop before moving on.
 **Done when:** audio plays and mic mute/unmute is verifiable in the console.
 Benchmark Tamil and Hindi voice quality across available TTS models — Tamil is
 usually the weaker one.
+
+### TTS latency & model notes (from Slice 2 eval probes, 2026-08)
+
+- **Streaming TTFA is the metric — and there is no 2.5 baseline.**
+  `gemini-3.1-flash-tts-preview` supports `stream: true` (`:streamGenerateContent`);
+  `gemini-2.5-flash-preview-tts` does not. Measured streaming time-to-first-audio
+  on 3.1 is **~1.3s median, flat across input length** (n=3/clip). The earlier
+  non-streaming figures (2.5–7.6s) were **n=1 and unreliable — do not quote them**;
+  and since 2.5 can't stream, **there is no trustworthy 2.5 latency baseline**, so
+  none should be cited. The translate leg's ~1.7s is a **complete time, not
+  time-to-first-token**, so the ~3.0s sequential figure is an **upper bound, not a
+  measured floor**. **First task of Slice 4: measure translate TTFT** (the
+  `stream-ttfa` probe can be repointed at `generateContent` streaming), *before*
+  choosing between overlapping the two calls and the Live API.
+- **Transliterate before TTS.** Latin script degrades TTS pronunciation (both
+  directions, both forms). Add a deterministic target-script transliteration step
+  in `/api/speak` before synthesis — this is where the held "romanisation" work
+  belongs, not in the translation prompt. Preserves decision 5 (loanword survives,
+  only script changes). See CLAUDE.md → TTS.
+  - *Dead end recorded (no commit to find):* a prompt-level rule forcing
+    whole-sentence target-script output was tried **in the working tree** during
+    Slice 2. It only partially worked (some clips moved to target script, others
+    did not) and was **discarded without ever being committed** — so there is no
+    revert commit and nothing to `git log`. It was dropped because `gemini-direct`
+    was validated by native speakers against the *current* prompt, and changing
+    the prompt invalidates that validation. The fix moves to deterministic
+    pre-TTS transliteration in Slice 4 (see the bullet above); the prompt rule may
+    be revisited later as a *complement*, not a replacement. Do not re-try it blind.
+- **Speech-to-speech (Live API) is reachable but not a drop-in.** Our key can
+  reach `gemini-3.1-flash-live-preview` (method `bidiGenerateContent`, a
+  bidirectional WebSocket). It collapses translate+speak into one round trip, but
+  it is designed for **continuous full-duplex audio**, which conflicts with
+  **locked decision 2** (hard mic-gate during TTS playback: we mute on `play()`,
+  unmute after `ended`). Treat the Live API as a separate architecture with that
+  constraint to solve, not a swap into the current tap-to-talk design. Per-model
+  Tamil/Hindi support is also not documented — must be tested before relying on it.
+- **Preview-model dependency is a post-POC risk, not a Slice 4 blocker.**
+  `gemini-2.5-flash-preview-tts` has **no announced shutdown date** — the
+  2026-10-16 date on Google's deprecations page is for the *text* models
+  (`gemini-2.5-flash` / `gemini-2.5-pro`), which we do not use. Google lists
+  `gemini-3.1-flash-tts-preview` as the recommended replacement for 2.5 TTS. Both
+  speaking-path models are **preview** with no shutdown date; plan to revisit once
+  a GA TTS model ships.
 
 ---
 
