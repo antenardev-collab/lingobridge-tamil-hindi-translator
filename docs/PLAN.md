@@ -95,6 +95,13 @@ two-word turns).
 > error states. Translation is re-tappable to replay. Keep the raw blob in
 > session memory alongside the result.
 
+> **Capture rewrite (required here):** OpenRouter `input_audio` rejects the
+> `webm/opus` that Slice 1's `MediaRecorder` produces on Android Chrome. Replace
+> live capture with a client-side AudioWorklet that encodes 16kHz mono PCM16 WAV
+> — matching the `test-clips/*.wav` format — and send `format: "wav"`. Keep
+> `echoCancellation`/`noiseSuppression` on the `getUserMedia` track (upstream of
+> the worklet). Do NOT use server-side ffmpeg. See CLAUDE.md → Stack.
+
 **Done when:** two people can hold a conversation by tapping. This is already
 usable — try it in a real shop before moving on.
 

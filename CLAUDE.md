@@ -17,7 +17,15 @@ translates without anyone touching it. We build toward that in stages.
 - All AI calls go through OpenRouter — one API key, server-side only
 - **STT + translation: a single call** to `/api/v1/chat/completions` with the
   `input_audio` content type. Do not split into transcribe → translate steps.
-- **TTS:** OpenRouter `/api/v1/audio/speech`
+  - **`input_audio` does NOT accept webm/opus.** Accepted formats: `wav, mp3,
+    aiff, aac, ogg, flac, m4a, pcm16, pcm24` — standardize on `wav`. Android
+    Chrome's `MediaRecorder` produces `webm/opus`, so live capture must be
+    rewritten to client-side AudioWorklet WAV encoding (16kHz mono PCM16) in
+    Slice 3. **Not** server-side ffmpeg — no server audio dep, no extra latency.
+    The `test-clips/*.wav` are already WAV, so the Slice 2 eval needs no change.
+- **TTS:** OpenRouter `/api/v1/audio/speech`. Use Google Gemini Flash TTS —
+  it covers both Tamil and Hindi; OpenAI/Mistral TTS Indian-language support is
+  weaker.
 - No database. Session state lives in React memory only.
 
 ## Locked architecture decisions
