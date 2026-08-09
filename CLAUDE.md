@@ -30,6 +30,13 @@ translates without anyone touching it. We build toward that in stages.
       audio-in Flash-Lite available to new keys; `gemini-2.5-flash-lite` is
       cheaper but Google 404s it for new users). `gemini-3.6-flash` is the
       quality ceiling, alternate only.
+    - **A/B finding (2026-08): `gemini-direct` is LOCKED as the translation
+      pipeline** — validated end-to-end by a native Hindi speaker (ta→hi) and a
+      native Tamil speaker (hi→ta). `gpt-audio-mini` has poor Tamil STT — it
+      hallucinates whole utterances (ta-02), splices English words inside Tamil
+      words (ta-08), and emits English phrases (ta-05); its Hindi STT is fine.
+      Gemini transcribes Tamil near-perfectly. The quality gap is downstream of
+      transcription, not the translation step.
   - **Inline audio does NOT accept webm/opus.** OpenRouter `input_audio` accepts
     `wav, mp3, aiff, aac, ogg, flac, m4a, pcm16, pcm24`; Gemini accepts
     `wav, mp3, aiff, aac, ogg, flac` — standardize on `wav` for both. Android
@@ -37,9 +44,20 @@ translates without anyone touching it. We build toward that in stages.
     rewritten to client-side AudioWorklet WAV encoding (16kHz mono PCM16) in
     Slice 3. **Not** server-side ffmpeg — no server audio dep, no extra latency.
     The `test-clips/*.wav` are already WAV, so the Slice 2 eval needs no change.
-- **TTS:** OpenRouter `/api/v1/audio/speech`. Use Google Gemini Flash TTS —
-  it covers both Tamil and Hindi; OpenAI/Mistral TTS Indian-language support is
-  weaker.
+- **TTS (Slice 4):** Google **Gemini native TTS** (`generateContent`,
+  `responseModalities:["AUDIO"]`) — covers both Tamil and Hindi; OpenAI/Mistral
+  coverage is weaker, and OpenRouter's Gemini TTS is PCM-only. Findings from the
+  Slice 2 listening evals:
+  - **Latin script in TTS input degrades pronunciation** — in both directions and
+    in both forms (full romanisation *and* individual loanwords). **Transliterate
+    the loanword into the target script before TTS; it sounds materially better.**
+    This preserves decision 5: the shared loanword survives, only its script
+    changes ("work" → வொர்க்/वर्क, never வேலை/काम).
+  - **Operational quirks to handle in `/api/speak`:** very short inputs return
+    `finishReason: OTHER` with no audio (pad + retry); an intra-word hyphen
+    (`வொர்க்-கு`) causes a deterministic 400 (strip it); the 2.5 TTS preview
+    rate-limits at ~15 req/min, so batch work must be paced and honour the 429
+    `retryDelay`.
 - No database. Session state lives in React memory only.
 
 ## Locked architecture decisions
@@ -75,6 +93,12 @@ silently work around it.
    पत्थर, विनियोग). Models drift toward formal register unprompted because it
    looks more "correct"; it is a failure here, because the listener won't
    understand it.
+
+6. **Audio-only interface.** The product is spoken: the two parties talk and
+   listen, they do not read the screen. On-screen text (transcription,
+   translation) is a debugging aid only, never a feature — and it must not drive
+   any design decision (layout, timing, per-script typography, sizing) in Slice 3
+   or later. When in doubt, optimise the spoken path and let the text be minimal.
 
 ## Hard rules
 
