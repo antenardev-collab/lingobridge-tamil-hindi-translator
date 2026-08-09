@@ -1,0 +1,8 @@
+﻿node_modules/
+.next/
+.env*.local
+.vercel
+
+# Real people's voices — stays local
+test-clips/*.wav
+test-clips/*.m4a

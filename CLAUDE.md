@@ -3,33 +3,33 @@
 ## What this is
 
 A two-way speech translation web app for conversations between Hindi-speaking
-migrant workers and Tamil speakers in Tamil Nadu — shops, boutiques, sites,
-markets. The end goal is a hands-free mode where the phone sits on a counter
-and translates a conversation without anyone touching it.
+migrant workers and Tamil speakers in Tamil Nadu. First test site is a boutique
+/ tailoring shop, but the app must work for ordinary conversation too — do not
+build tailoring-specific logic into the app.
 
-We are building toward that in stages. **Do not jump ahead to hands-free.**
-See `docs/PLAN.md` for the slice order and what is currently in scope.
+The end goal is a hands-free mode where the phone sits on a counter and
+translates without anyone touching it. We build toward that in stages.
+**Do not jump ahead to hands-free.** See `docs/PLAN.md` for the slice order.
 
 ## Stack
 
 - Next.js (App Router) + TypeScript, deployed on Vercel
 - All AI calls go through OpenRouter — one API key, server-side only
-- **STT + language detection + translation: a single call** to
-  `/api/v1/chat/completions` with the `input_audio` content type.
-  Do not split this into separate transcribe → detect → translate steps.
+- **STT + translation: a single call** to `/api/v1/chat/completions` with the
+  `input_audio` content type. Do not split into transcribe → translate steps.
 - **TTS:** OpenRouter `/api/v1/audio/speech`
 - No database. Session state lives in React memory only.
 
 ## Locked architecture decisions
 
-These were decided deliberately. If you think one is wrong, say so and stop —
-do not silently work around it.
+Decided deliberately. If you think one is wrong, say so and stop — do not
+silently work around it.
 
 1. **Speaker-selected language, not auto-detection.** Split screen: Tamil half,
    Hindi half. Each person taps their own side to speak. The tap tells us the
    source language, so we never guess. This eliminates misdetection on short
-   utterances ("haan", "seri", "ok", numbers, names) and on code-mixed speech,
-   which is constant in this population.
+   utterances ("சரி", "haan", numbers, names) and on code-mixed speech, which is
+   constant in this population.
 
 2. **Echo loop is solved by muting the mic, not by classifying audio.** We
    control TTS playback, so we know when the machine is speaking. Hard-gate the
@@ -41,23 +41,32 @@ do not silently work around it.
    models. Target under 2s from release-to-speak.
 
 4. **Retain raw audio per turn in session memory** from slice 1 onward, keyed by
-   which side was tapped. Slice 6 uses it for speaker enrollment. It is not used
-   before then — keep it, don't wire it up.
+   which side was tapped. Slice 6 uses it for speaker enrollment. Keep it,
+   don't wire it up.
+
+5. **Colloquial register in, colloquial register out.** Real speech here is
+   heavily code-mixed: "இந்த வொர்க் முடிக்க எவ்ளோ டைம் ஆகும்?",
+   "मैम, नाइट वर्क करना मुश्किल है". The translation prompt must explicitly
+   instruct the model to output natural spoken register and **keep the English
+   loanwords both parties already share** — work, design, stone, delivery,
+   customer, time. Do NOT substitute literary equivalents (வேலை, விநியோகி,
+   पत्थर, विनियोग). Models drift toward formal register unprompted because it
+   looks more "correct"; it is a failure here, because the listener won't
+   understand it.
 
 ## Hard rules
 
-- `OPENROUTER_API_KEY` is server-side only. It must never appear in client
-  bundles, `NEXT_PUBLIC_*` vars, or a browser `fetch`. All model calls go
-  through Next.js route handlers.
-- API routes return validated, typed JSON — never raw model output. Models
-  wrap JSON in markdown fences; strip and parse defensively, and fail loudly.
+- `OPENROUTER_API_KEY` is server-side only. Never in client bundles,
+  `NEXT_PUBLIC_*` vars, or a browser `fetch`. All model calls go through
+  Next.js route handlers.
+- API routes return validated, typed JSON — never raw model output. Models wrap
+  JSON in markdown fences; strip and parse defensively, and fail loudly.
 - All model IDs live in `lib/models.ts`. Never hardcode a model string
-  elsewhere. Verify IDs against openrouter.ai/models before using them —
-  they change.
-- Mobile-first. Design and test at 390px width. Assume 4G on a noisy site,
-  not office wifi.
+  elsewhere. Verify IDs against openrouter.ai/models — they change.
+- Mobile-first. Design and test at 390px width. Assume 4G on a noisy site.
 - Every user-facing string must exist in Tamil, Hindi, and English.
-  No English-only UI text.
+- **`test-clips/*.wav` is gitignored.** The audio contains real people's voices
+  and stays local. Only `test-clips/ground-truth.json` is committed.
 
 ## Commands
 
@@ -65,14 +74,13 @@ do not silently work around it.
 npm run dev        # local dev
 npm run build      # must pass before any commit
 npm run lint
-npm run eval       # runs recorded test clips through /api/translate (slice 3+)
+npm run eval       # slice 2+ — see docs/PLAN.md
 ```
 
 ## Testing constraints
 
-Microphone access requires HTTPS. Localhost will not give you working mic
-capture on a physical phone — test on Vercel preview URLs on a real Android
-device. Every PR gets one.
+Microphone access requires HTTPS. Localhost will not give working mic capture on
+a physical phone — test on Vercel preview URLs on a real Android device.
 
 ## Out of scope
 
