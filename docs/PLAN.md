@@ -119,8 +119,10 @@ on Android Chrome.
 > **Format parity is load-bearing.** The AudioWorklet must emit the *same* format
 > the eval clips use (16kHz mono PCM16 WAV). If live capture and `test-clips/*.wav`
 > diverge, the Slice 2 eval numbers (latency, transcription quality) no longer
-> transfer to production. If the worklet output differs, re-encode the test clips
-> to match and re-run `npm run eval` to re-baseline.
+> transfer to production. **Fallback if the worklet can't emit 16kHz cleanly:
+> downsample server-side in `/api/translate` to 16k mono PCM16 before the model
+> call. Do NOT re-encode `test-clips/*.wav`** — they are ground truth; altering
+> them invalidates the baseline permanently.
 
 **Done when:** holding a button on a real Android phone captures WAV, posts to
 `/api/translate`, and returns a correct translation — verified on a Vercel
