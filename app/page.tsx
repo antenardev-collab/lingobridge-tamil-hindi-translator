@@ -1,0 +1,88 @@
+"use client";
+
+import { useState } from "react";
+import HoldToTalk from "@/components/HoldToTalk";
+import type { Recording } from "@/lib/recorder";
+import { strings, micErrorMessages, forSide, type MicErrorKind } from "@/lib/i18n";
+import type { Side, Turn } from "@/lib/types";
+
+function makeId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+export default function Home() {
+  // Session memory only — raw audio retained per turn, keyed by side
+  // (locked decision 4). Not wired to anything yet.
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [micError, setMicError] = useState<MicErrorKind | null>(null);
+
+  function addTurn(side: Side, rec: Recording) {
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: makeId(),
+        side,
+        blob: rec.blob,
+        mimeType: rec.mimeType,
+        timestamp: Date.now(),
+      },
+    ]);
+  }
+
+  const half = (side: Side) => {
+    const sideTurns = turns.filter((t) => t.side === side);
+    return (
+      <section className={`half ${side}`}>
+        <h1 className="half-heading">{strings.heading[side]}</h1>
+        <HoldToTalk
+          side={side}
+          onCapture={(rec) => addTurn(side, rec)}
+          onError={setMicError}
+          onStart={() => setMicError(null)}
+        />
+        <div className="turns" aria-live="polite">
+          {sideTurns.length === 0 ? (
+            <div className="turn-empty">{forSide(strings.noTurnsYet, side)}</div>
+          ) : (
+            sideTurns.map((t) => (
+              <div key={t.id} className="turn-row">
+                {formatBytes(t.blob.size)} · {t.mimeType || "?"} · {formatTime(t.timestamp)}
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    );
+  };
+
+  return (
+    <main className="screen">
+      {half("ta")}
+      {half("hi")}
+      {micError && (
+        <div className="mic-error" role="alert">
+          <span>{micErrorMessages[micError].ta}</span>
+          <span>{micErrorMessages[micError].hi}</span>
+          <span>{micErrorMessages[micError].en}</span>
+        </div>
+      )}
+    </main>
+  );
+}

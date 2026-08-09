@@ -3,6 +3,9 @@
 .env*.local
 .vercel
 
+# Per-user local Claude Code settings (session permission grants, etc.)
+.claude/settings.local.json
+
 # Real people's voices — stays local
 test-clips/*.wav
 test-clips/*.m4a

@@ -1,0 +1,120 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Noto Sans Tamil", "Noto Sans Devanagari",
+    sans-serif;
+  color: #f5f5f5;
+  background: #000;
+}
+
+/*
+ * Container is 100dvh and each half is 50dvh (not vh): dynamic viewport units
+ * account for Android Chrome's collapsing address bar, otherwise the bottom
+ * (Hindi) half slides behind browser chrome.
+ */
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  width: 100%;
+}
+
+.half {
+  flex: 0 0 50dvh;
+  height: 50dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 16px;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.half.ta {
+  background: #12203a;
+}
+
+.half.hi {
+  background: #2a1230;
+}
+
+.half-heading {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.hold-btn {
+  /* Comfortably past the 44px minimum, thumb-reachable. */
+  min-height: 96px;
+  width: 100%;
+  border: none;
+  border-radius: 16px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  background: #2f6df6;
+  /* Stops scroll/long-press gestures from stealing the pointer stream. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+.half.hi .hold-btn {
+  background: #b0409a;
+}
+
+.hold-btn.recording {
+  background: #e0364c;
+}
+
+.turns {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-row {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.turn-empty {
+  opacity: 0.55;
+  font-style: italic;
+}
+
+.mic-error {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #7a1020;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
