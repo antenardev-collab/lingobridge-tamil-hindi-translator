@@ -132,6 +132,23 @@ function checkMustPreserve(mustPreserve, translation) {
 }
 
 // ---------------------------------------------------------------------------
+// script check — Gemini sometimes romanises the ENTIRE output ("5 hours aagum
+// ma'am") instead of writing Tamil/Devanagari. Flag when the majority of the
+// letters are Latin. Individual English loanwords in Latin are fine and expected
+// (work, stone, blouse) — only whole-sentence romanisation trips this.
+// ---------------------------------------------------------------------------
+function isRomanized(text) {
+  let latin = 0;
+  let indic = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    if ((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)) latin++;
+    else if ((c >= 0x0b80 && c <= 0x0bff) || (c >= 0x0900 && c <= 0x097f)) indic++;
+  }
+  return latin + indic > 0 && latin > indic;
+}
+
+// ---------------------------------------------------------------------------
 // stats
 // ---------------------------------------------------------------------------
 function mean(xs) {
@@ -195,6 +212,7 @@ async function main() {
           translation: json.translation,
           mustPreservePass: mp.pass,
           mustPreserveMissing: mp.missing,
+          romanized: isRomanized(json.translation),
           usage: json.usage,
         };
       }
@@ -234,7 +252,8 @@ function printClip(r) {
   console.log(
     `[${r.file}] ${r.domain.padEnd(9)} ${String(r.elapsedMs).padStart(5)}ms  ` +
       `cost ${cost}  ${tokens}  mustPreserve: ${mpLabel(r)}` +
-      (r.mustPreserveMissing?.length ? ` (missing ${r.mustPreserveMissing.join(", ")})` : ""),
+      (r.mustPreserveMissing?.length ? ` (missing ${r.mustPreserveMissing.join(", ")})` : "") +
+      (r.romanized ? "  [ROMANIZED]" : ""),
   );
   if (r.error) {
     console.log(`  ERROR: ${r.error}${r.detail ? ` — ${r.detail}` : ""}`);
@@ -252,14 +271,18 @@ function summaryFor(rows) {
   const costs = ok.map((r) => r.usage?.costUsd ?? 0);
   const withTokens = rows.filter((r) => !r.error && r.mustPreserve?.length);
   const passed = withTokens.filter((r) => r.mustPreservePass);
+  const romanized = ok.filter((r) => r.romanized);
   return {
     clips: rows.length,
     errors: rows.length - ok.length,
+    okCount: ok.length,
     meanMs: Math.round(mean(latencies)),
     p90Ms: Math.round(p90(latencies)),
     mustPreserveTotal: withTokens.length,
     mustPreservePassed: passed.length,
     mustPreserveRate: withTokens.length ? passed.length / withTokens.length : null,
+    romanizedCount: romanized.length,
+    romanizedRate: ok.length ? romanized.length / ok.length : null,
     meanCostUsd: mean(costs),
     totalCostUsd: costs.reduce((a, b) => a + b, 0),
   };
@@ -286,10 +309,14 @@ function printSummaryRow(label, s) {
     s.mustPreserveRate === null
       ? "n/a"
       : `${(s.mustPreserveRate * 100).toFixed(0)}% (${s.mustPreservePassed}/${s.mustPreserveTotal})`;
+  const rom =
+    s.romanizedRate === null
+      ? "n/a"
+      : `${(s.romanizedRate * 100).toFixed(0)}% (${s.romanizedCount}/${s.okCount})`;
   console.log(
     `${label.padEnd(10)} clips=${String(s.clips).padStart(2)} errors=${s.errors}  ` +
       `latency mean=${String(s.meanMs).padStart(5)}ms p90=${String(s.p90Ms).padStart(5)}ms  ` +
-      `mustPreserve=${rate}  ` +
+      `mustPreserve=${rate}  romanized=${rom}  ` +
       `cost mean=${usd(s.meanCostUsd)} total=${usd(s.totalCostUsd)} (${inr(s.totalCostUsd)})`,
   );
 }
