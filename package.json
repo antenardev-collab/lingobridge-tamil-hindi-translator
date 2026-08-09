@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "eval": "node scripts/eval.mjs"
+    "eval": "node scripts/eval.mjs",
+    "eval:tts": "node scripts/eval-tts.mjs"
   },
   "dependencies": {
     "next": "15.5.23",

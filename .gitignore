@@ -12,3 +12,6 @@ test-clips/*.m4a
 
 # Eval run outputs — timestamped, not worth committing
 eval-results/
+
+# TTS listening-eval audio — generated, and contains synthesized speech
+eval-audio/
