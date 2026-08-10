@@ -84,8 +84,14 @@ export const PIPELINES: Record<PipelineId, PipelineConfig> = {
   },
 };
 
-/** Default when the caller doesn't specify a pipeline. */
-export const DEFAULT_PIPELINE: PipelineId = "openrouter-single";
+/**
+ * Default when the caller doesn't specify a pipeline. This is gemini-direct,
+ * the pipeline LOCKED by the Slice 2 A/B (CLAUDE.md → Stack): gpt-audio-mini's
+ * Tamil STT was rejected. The client omits `pipeline` and inherits this — one
+ * source of truth. openrouter-single stays selectable explicitly for A/B runs.
+ * NOTE: scripts/eval.mjs has its own separate default and does NOT read this.
+ */
+export const DEFAULT_PIPELINE: PipelineId = "gemini-direct";
 
 export function isPipelineId(x: string): x is PipelineId {
   return x === "openrouter-single" || x === "gemini-direct";
