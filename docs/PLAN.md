@@ -10,8 +10,11 @@ Do not start a slice until the previous one works on a real device.
 ## Assets already in place
 
 - `test-clips/ground-truth.json` — 26 entries, 13 Tamil source + 13 Hindi source
-- `test-clips/*.wav` — 16kHz mono PCM, filenames `ta-01.wav` … `hi-13.wav`
-  (gitignored — audio stays local)
+- `test-clips/*.wav` — 16kHz mono 16-bit PCM, filenames `ta-01.wav` … `hi-13.wav`
+  (gitignored — audio stays local). These are ffmpeg output: a **78-byte header**
+  carrying a `LIST/INFO` `ISFT: Lavf63.1.100` chunk between `fmt ` and `data`, not
+  a canonical 44-byte header. That chunk is inert metadata the model ignores; the
+  load-bearing property is the PCM stream (16kHz / mono / 16-bit LE).
 
 Ground-truth fields per entry: `file`, `sourceLang`, `domain`, `tags`,
 `speaker`, `context`, `durationSec`, `spoken`, `spokenMeaning`,
@@ -116,15 +119,19 @@ on Android Chrome.
 > minimally; do not invest in per-script typography or sizing. Spoken playback is
 > Slice 4.
 
-> **Format parity is load-bearing.** The AudioWorklet must emit the *same* format
-> the eval clips use (16kHz mono PCM16 WAV). If live capture and `test-clips/*.wav`
-> diverge, the Slice 2 eval numbers (latency, transcription quality) no longer
-> transfer to production. **Fallback if the worklet can't emit 16kHz cleanly:
-> downsample server-side in `/api/translate` to 16k mono PCM16 before the model
-> call. Do NOT re-encode `test-clips/*.wav`** — they are ground truth; altering
-> them invalidates the baseline permanently.
+> **Format parity is load-bearing — but it is PCM-stream parity, not whole-file
+> byte-identity.** The AudioWorklet must emit the same *PCM stream* the eval clips
+> carry (16kHz mono 16-bit LE). It emits a **canonical 44-byte header by design**
+> and does NOT reproduce the clips' 78-byte ffmpeg `LIST/INFO` chunk — asserting a
+> `Lavf` provenance on live-captured audio would be false, and the model ignores
+> the chunk regardless. What would break the Slice 2 baseline is a divergent PCM
+> stream (wrong rate, channel count, or sample encoding), not a different-but-valid
+> container header. **Fallback if the worklet can't emit 16kHz cleanly: downsample
+> server-side in `/api/translate` to 16k mono PCM16 before the model call. Do NOT
+> re-encode `test-clips/*.wav`** — they are ground truth; altering them invalidates
+> the baseline permanently.
 
-### Slice 3 findings so far (2026-08-10, pre-worklet)
+### Slice 3 findings so far (2026-08-10)
 
 - **Device honours `sampleRate: 16000`.** Verified on the real Android phone
   (Chrome 150): a requested 16k `AudioContext` reports 16000 (default is 48000,
@@ -134,6 +141,17 @@ on Android Chrome.
   low-pass filter.** The track's own `sampleRate: 48000` is the hardware capture
   rate and is expected. **The server-side downsample fallback above stays
   recorded and unused — do not build it.**
+- **Clips have a 78-byte header (ffmpeg `LIST/INFO`), not 44 — the worklet emits
+  canonical 44 by design.** Found while building the encoder: `fmt ` →
+  `LIST/INFO ISFT: Lavf63.1.100` → `data`. The encoder lives in `lib/wav.ts`
+  (shared and importable, so it is testable); the worklet (`public/worklets/
+  pcm-recorder.js`) does framing only and posts Float32 frames, and the main
+  thread does Float32→Int16 + header. Off-device round-trip (decode a clip with
+  `decodeAudioData` in a 16k context → `floatToInt16`/`encodeWav` → diff the PCM
+  region) is **byte-identical**: 0 diffs over 30037 samples, `−32768`/`+32767`
+  edges correct, header fields canonical. Worklet plumbing (static-asset load +
+  `process()` pull) verified via an OfflineAudioContext render. Still to verify on
+  the device: live mic capture and the on-screen implied-rate readout (~16000 Hz).
 - **`DEFAULT_PIPELINE` was `openrouter-single` — the rejected pipeline — while
   CLAUDE.md locks `gemini-direct`.** A code default disagreeing with a locked
   decision. Corrected to `gemini-direct` so the Slice 3 client can omit `pipeline`
