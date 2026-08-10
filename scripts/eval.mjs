@@ -14,6 +14,11 @@
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+// One source of truth for the default pipeline: the same DEFAULT_PIPELINE the
+// endpoint uses (lib/models.ts). Node strips the TS types on import. A bare
+// `npm run eval` must not disagree with the endpoint about which provider is
+// default — that disagreement was the openrouter-single re-baselining trap.
+import { DEFAULT_PIPELINE } from "../lib/models.ts";
 
 // Approximate USD->INR for the "cost per rupee" view. Not authoritative.
 const USD_INR = 88;
@@ -34,7 +39,7 @@ function parseArgs(argv) {
   return out;
 }
 const args = parseArgs(process.argv.slice(2));
-const pipeline = args.pipeline || "openrouter-single";
+const pipeline = args.pipeline || DEFAULT_PIPELINE;
 const modelArg = args.model || undefined;
 const domainFilter = args.domain || undefined;
 const fileFilter = args.file || undefined;

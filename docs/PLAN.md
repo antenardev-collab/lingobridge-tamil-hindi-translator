@@ -137,10 +137,12 @@ on Android Chrome.
 - **`DEFAULT_PIPELINE` was `openrouter-single` — the rejected pipeline — while
   CLAUDE.md locks `gemini-direct`.** A code default disagreeing with a locked
   decision. Corrected to `gemini-direct` so the Slice 3 client can omit `pipeline`
-  and inherit the right one (one source of truth). **Still open:** `scripts/eval.mjs`
-  carries its *own* hardcoded default (`"openrouter-single"`) and does not read
-  `DEFAULT_PIPELINE`, so a bare `npm run eval` still runs the rejected pipeline —
-  a re-baselining trap. Aligning the eval default is a separate, un-done change.
+  and inherit the right one (one source of truth). `scripts/eval.mjs` used to
+  carry its *own* hardcoded default and would have re-baselined against the
+  rejected pipeline on a bare `npm run eval`; it now imports `DEFAULT_PIPELINE`
+  from `lib/models.ts`, so endpoint and eval share the single default. The eval
+  prints `pipeline=…` in its header, `meta.pipeline` in the JSON, and the pipeline
+  in the results filename, so every run's provenance is in its own output.
 - **`/api/translate` now rejects non-WAV bytes** with a RIFF/WAVE magic-number
   check (400), so a worklet format regression fails loud at the endpoint instead
   of as an opaque Gemini error. All 26 clips still pass (26/26 header + live eval).
