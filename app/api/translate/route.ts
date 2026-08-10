@@ -48,7 +48,26 @@ export async function POST(req: Request) {
     );
   }
 
-  const audioBase64 = Buffer.from(await audio.arrayBuffer()).toString("base64");
+  // The route trusts these bytes are WAV: downstream it labels them audio/wav
+  // without inspecting or transcoding. Verify the RIFF/WAVE magic number so a
+  // client-side capture regression (e.g. the worklet emitting the wrong format)
+  // surfaces as a clear 400 here instead of an opaque Gemini failure. Check both
+  // markers — "RIFF" at 0..3 alone is shared with AVI/WebP and other RIFF
+  // containers; "WAVE" at 8..11 is what makes it a WAV. This contract belongs at
+  // the endpoint because it is the interface that survives a future native rebuild.
+  const buf = Buffer.from(await audio.arrayBuffer());
+  if (
+    buf.length < 12 ||
+    buf.toString("ascii", 0, 4) !== "RIFF" ||
+    buf.toString("ascii", 8, 12) !== "WAVE"
+  ) {
+    return NextResponse.json(
+      { error: "'audio' must be WAV (RIFF/WAVE)" },
+      { status: 400 },
+    );
+  }
+
+  const audioBase64 = buf.toString("base64");
 
   try {
     const out = await runTranslate(pipeline, {
