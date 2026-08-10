@@ -124,6 +124,27 @@ on Android Chrome.
 > call. Do NOT re-encode `test-clips/*.wav`** — they are ground truth; altering
 > them invalidates the baseline permanently.
 
+### Slice 3 findings so far (2026-08-10, pre-worklet)
+
+- **Device honours `sampleRate: 16000`.** Verified on the real Android phone
+  (Chrome 150): a requested 16k `AudioContext` reports 16000 (default is 48000,
+  so it's honoured, not coincidence) and the `MediaStreamAudioSourceNode` sits in
+  the 16k context — Chrome resamples at the graph boundary. So the worklet needs
+  only Float32→Int16 + framing + a 16kHz WAV header: **no manual decimator, no
+  low-pass filter.** The track's own `sampleRate: 48000` is the hardware capture
+  rate and is expected. **The server-side downsample fallback above stays
+  recorded and unused — do not build it.**
+- **`DEFAULT_PIPELINE` was `openrouter-single` — the rejected pipeline — while
+  CLAUDE.md locks `gemini-direct`.** A code default disagreeing with a locked
+  decision. Corrected to `gemini-direct` so the Slice 3 client can omit `pipeline`
+  and inherit the right one (one source of truth). **Still open:** `scripts/eval.mjs`
+  carries its *own* hardcoded default (`"openrouter-single"`) and does not read
+  `DEFAULT_PIPELINE`, so a bare `npm run eval` still runs the rejected pipeline —
+  a re-baselining trap. Aligning the eval default is a separate, un-done change.
+- **`/api/translate` now rejects non-WAV bytes** with a RIFF/WAVE magic-number
+  check (400), so a worklet format regression fails loud at the endpoint instead
+  of as an opaque Gemini error. All 26 clips still pass (26/26 header + live eval).
+
 **Done when:** holding a button on a real Android phone captures WAV, posts to
 `/api/translate`, and returns a correct translation — verified on a Vercel
 preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
