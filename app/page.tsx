@@ -42,18 +42,62 @@ export default function Home() {
   // the stable ref, not `engine`, so the effect runs once.
   useEffect(() => () => void engineRef.current?.dispose(), []);
 
-  function addTurn(side: Side, rec: Recording) {
+  function updateTurn(id: string, patch: Partial<Turn>) {
+    setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  }
+
+  // On release: register the turn (status "loading", raw WAV retained per locked
+  // decision 4) and fire its own /api/translate request. Requests run in parallel
+  // and never block capture — each resolves independently by id, no cancellation.
+  async function handleCapture(side: Side, rec: Recording) {
+    const id = makeId();
     setTurns((prev) => [
       ...prev,
       {
-        id: makeId(),
+        id,
         side,
         blob: rec.blob,
         mimeType: rec.mimeType,
         durationSec: rec.durationSec,
         timestamp: Date.now(),
+        status: "loading",
       },
     ]);
+
+    const started = performance.now();
+    try {
+      const fd = new FormData();
+      fd.append("audio", rec.blob, "turn.wav");
+      // sourceLang is the side that tapped (locked decision 1). pipeline omitted —
+      // it inherits DEFAULT_PIPELINE (gemini-direct).
+      fd.append("sourceLang", side);
+      const res = await fetch("/api/translate", { method: "POST", body: fd });
+      const requestMs = Math.round(performance.now() - started);
+      let data: { original?: unknown; translation?: unknown } | null = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        // Keep the two failure sources distinct: 400 means our capture sent bad
+        // bytes (form / sourceLang / non-WAV), 502 means the model returned garbage.
+        const errorLabel =
+          res.status === 400
+            ? "HTTP 400 · capture"
+            : res.status === 502
+              ? "HTTP 502 · model"
+              : `HTTP ${res.status}`;
+        updateTurn(id, { status: "error", errorLabel, requestMs });
+        return;
+      }
+      const original = data && typeof data.original === "string" ? data.original : "";
+      const translation = data && typeof data.translation === "string" ? data.translation : "";
+      updateTurn(id, { status: "done", original, translation, requestMs });
+    } catch {
+      const requestMs = Math.round(performance.now() - started);
+      updateTurn(id, { status: "error", errorLabel: "network", requestMs });
+    }
   }
 
   // Debug-only acceptance readout (locked decision 6): implied sample rate from
@@ -64,36 +108,53 @@ export default function Home() {
     return Math.round((t.blob.size - 44) / 2 / t.durationSec);
   }
 
-  const half = (side: Side) => {
-    const sideTurns = turns.filter((t) => t.side === side);
-    return (
-      <section className={`half ${side}`}>
-        <h1 className="half-heading">{strings.heading[side]}</h1>
-        <HoldToTalk
-          side={side}
-          engine={engine}
-          onCapture={(rec) => addTurn(side, rec)}
-          onError={setMicError}
-          onStart={() => setMicError(null)}
-        />
-        <div className="turns" aria-live="polite">
-          {sideTurns.length === 0 ? (
-            <div className="turn-empty">{forSide(strings.noTurnsYet, side)}</div>
-          ) : (
-            sideTurns.map((t) => {
-              const rate = impliedRate(t);
-              return (
-                <div key={t.id} className="turn-row">
-                  {formatBytes(t.blob.size)} · {t.durationSec.toFixed(2)}s ·{" "}
-                  {rate === null ? "—" : `~${rate} Hz`} · {formatTime(t.timestamp)}
-                </div>
-              );
-            })
-          )}
-        </div>
-      </section>
-    );
-  };
+  // Every turn shows on BOTH halves: the speaker's side shows `original`, the
+  // listener's side shows `translation` — each already in that side's script.
+  // Debug text only (locked decision 6); the capture debug row is speaker-side.
+  const half = (side: Side) => (
+    <section className={`half ${side}`}>
+      <h1 className="half-heading">{strings.heading[side]}</h1>
+      <HoldToTalk
+        side={side}
+        engine={engine}
+        onCapture={(rec) => handleCapture(side, rec)}
+        onError={setMicError}
+        onStart={() => setMicError(null)}
+      />
+      <div className="turns" aria-live="polite">
+        {turns.length === 0 ? (
+          <div className="turn-empty">{forSide(strings.noTurnsYet, side)}</div>
+        ) : (
+          turns.map((t) => {
+            const isSpeaker = t.side === side;
+            const rate = impliedRate(t);
+            const text =
+              t.status === "loading"
+                ? "…"
+                : t.status === "error"
+                  ? `⚠ ${t.errorLabel ?? "error"}`
+                  : (isSpeaker ? t.original : t.translation) || "—";
+            return (
+              <div
+                key={t.id}
+                className={`turn-row${t.status === "error" ? " turn-error" : ""}`}
+              >
+                <div className="turn-text">{text}</div>
+                {isSpeaker && (
+                  <div className="turn-debug">
+                    {formatBytes(t.blob.size)} · {t.durationSec.toFixed(2)}s ·{" "}
+                    {rate === null ? "—" : `~${rate} Hz`}
+                    {t.requestMs != null ? ` · ${t.requestMs} ms` : ""} ·{" "}
+                    {formatTime(t.timestamp)}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <main className="screen">

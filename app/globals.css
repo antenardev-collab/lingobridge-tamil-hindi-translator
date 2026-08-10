@@ -96,6 +96,21 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.turn-text {
+  overflow-wrap: anywhere;
+}
+
+/* Debug-only capture/latency readout — deliberately small and dim (decision 6). */
+.turn-debug {
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+.turn-row.turn-error {
+  background: rgba(224, 54, 76, 0.18);
+}
+
 .turn-empty {
   opacity: 0.55;
   font-style: italic;
