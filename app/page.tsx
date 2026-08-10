@@ -41,9 +41,18 @@ export default function Home() {
         side,
         blob: rec.blob,
         mimeType: rec.mimeType,
+        durationSec: rec.durationSec,
         timestamp: Date.now(),
       },
     ]);
+  }
+
+  // Debug-only acceptance readout (locked decision 6): implied sample rate from
+  // the PCM byte count and the independently measured wall-clock duration. A
+  // correct 16 kHz encoder reads ~16000; a worklet silently at 48k would read ~48000.
+  function impliedRate(t: Turn): number | null {
+    if (!t.durationSec) return null;
+    return Math.round((t.blob.size - 44) / 2 / t.durationSec);
   }
 
   const half = (side: Side) => {
@@ -61,11 +70,15 @@ export default function Home() {
           {sideTurns.length === 0 ? (
             <div className="turn-empty">{forSide(strings.noTurnsYet, side)}</div>
           ) : (
-            sideTurns.map((t) => (
-              <div key={t.id} className="turn-row">
-                {formatBytes(t.blob.size)} · {t.mimeType || "?"} · {formatTime(t.timestamp)}
-              </div>
-            ))
+            sideTurns.map((t) => {
+              const rate = impliedRate(t);
+              return (
+                <div key={t.id} className="turn-row">
+                  {formatBytes(t.blob.size)} · {t.durationSec.toFixed(2)}s ·{" "}
+                  {rate === null ? "—" : `~${rate} Hz`} · {formatTime(t.timestamp)}
+                </div>
+              );
+            })
           )}
         </div>
       </section>

@@ -3,13 +3,15 @@ export type Side = "ta" | "hi";
 
 /**
  * One captured utterance, held in React session memory only (locked decision 4).
- * `mimeType` records the runtime-selected container so Slice 2 can send the
- * correct content type to OpenRouter without guessing.
+ * `mimeType` is now always "audio/wav" (single WAV capture path); it's retained
+ * for a stable shape. `durationSec` is wall-clock capture time, used only for the
+ * debug-only implied-sample-rate readout (locked decision 6).
  */
 export interface Turn {
   id: string;
   side: Side;
   blob: Blob;
   mimeType: string;
+  durationSec: number;
   timestamp: number;
 }
