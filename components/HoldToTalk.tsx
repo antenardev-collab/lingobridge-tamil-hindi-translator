@@ -28,6 +28,9 @@ export default function HoldToTalk({ side, engine, onCapture, onError, onStart }
   const [recording, setRecording] = useState(false);
   // Guards against a stop firing before warm-up resolves, or two stops racing.
   const activeRef = useRef(false);
+  // Ownership token for the turn this button started, or null if the engine was
+  // busy (the other side is holding). Only a non-null token may stop the turn.
+  const tokenRef = useRef<number | null>(null);
 
   async function begin(e: React.PointerEvent<HTMLButtonElement>) {
     if (activeRef.current) return;
@@ -48,11 +51,15 @@ export default function HoldToTalk({ side, engine, onCapture, onError, onStart }
       }
       // Gate the visual recording state on the FIRST real frame, not on warm-up
       // resolving: instant when warm, a visible lag if warming ever regresses.
-      engine.startRecording(() => {
+      // A null token means the other side owns the mic — startRecording never
+      // arms the callback, so the button stays honestly idle (never shows
+      // "recording" for a turn that didn't start).
+      tokenRef.current = engine.startRecording(() => {
         if (activeRef.current) setRecording(true);
       });
     } catch (err) {
       activeRef.current = false;
+      tokenRef.current = null;
       setRecording(false);
       if (err instanceof RecorderError) onError(err.kind);
       else onError("unavailable");
@@ -63,9 +70,13 @@ export default function HoldToTalk({ side, engine, onCapture, onError, onStart }
     if (!activeRef.current) return;
     activeRef.current = false;
     setRecording(false);
+    const token = tokenRef.current;
+    tokenRef.current = null;
+    // No token means this press never owned a turn (engine was busy, or released
+    // during warm-up) — nothing to stop, nothing to report.
+    if (token === null) return;
     try {
-      const rec = await engine.stopRecording();
-      // null means the turn never actually began (released during warm-up).
+      const rec = await engine.stopRecording(token);
       if (rec) onCapture(rec);
     } catch (err) {
       if (err instanceof RecorderError) onError(err.kind);

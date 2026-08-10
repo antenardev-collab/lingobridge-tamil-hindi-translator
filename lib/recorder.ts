@@ -56,6 +56,14 @@ export class CaptureEngine {
   private startedAt = 0;
   private onFirstFrame: (() => void) | null = null;
 
+  // Ownership token for the active turn. startRecording hands one out; only a
+  // stopRecording carrying the matching token may end and claim the audio. This
+  // is what makes simultaneous holds safe: the second (non-owning) side gets null
+  // and cannot start, truncate, or walk off with the first speaker's audio under
+  // its own sourceLang. Monotonic so a laggy release can't stop a newer turn.
+  private turnToken = 0;
+  private activeToken: number | null = null;
+
   // Set when the OS revokes the stream or the context dies (e.g. on backgrounding).
   // The next ensureWarm then fully re-acquires rather than capturing silence.
   private needsReacquire = false;
@@ -174,29 +182,35 @@ export class CaptureEngine {
   }
 
   /**
-   * Begin accumulating frames for one turn. `onFirstFrame` fires on the first
-   * frame that actually arrives after this call — the real readiness signal the
-   * UI gates its recording state on (instant when warm, visibly late if warming
-   * ever regresses: a free detector for the front-loss bug). No-op if already
-   * recording, so a second concurrent press can't corrupt the buffer.
+   * Begin accumulating frames for one turn. Returns an ownership token, or null
+   * if the engine is already recording another side's turn (the caller must then
+   * treat itself as not recording — never show a recording state it didn't get).
+   * `onFirstFrame` fires on the first frame that actually arrives after this call
+   * — the real readiness signal the UI gates its recording state on (instant when
+   * warm, visibly late if warming ever regresses: a free detector for the
+   * front-loss bug).
    */
-  startRecording(onFirstFrame: () => void): void {
-    if (this.recording) return;
+  startRecording(onFirstFrame: () => void): number | null {
+    if (this.recording) return null;
+    const token = ++this.turnToken;
+    this.activeToken = token;
     this.chunks = [];
     this.onFirstFrame = onFirstFrame;
     this.recording = true;
     this.startedAt = performance.now();
+    return token;
   }
 
   /**
-   * End the turn. Returns the WAV + wall-clock duration, or null if no turn was
-   * in progress (e.g. the button was released during warm-up, before recording
-   * actually began).
+   * End the turn owned by `token`. Returns the WAV + wall-clock duration, or null
+   * if `token` doesn't own the active recording (a non-owning side, or a stale
+   * release) or no turn is in progress (released during warm-up).
    */
-  async stopRecording(): Promise<Recording | null> {
-    if (!this.recording) return null;
+  async stopRecording(token: number): Promise<Recording | null> {
+    if (!this.recording || token !== this.activeToken) return null;
     const durationSec = this.startedAt ? (performance.now() - this.startedAt) / 1000 : 0;
     this.recording = false;
+    this.activeToken = null;
     this.onFirstFrame = null;
     const chunks = this.chunks;
     this.chunks = [];
@@ -223,6 +237,7 @@ export class CaptureEngine {
   /** Full teardown — stops the mic and closes the context. For unmount. */
   async dispose(): Promise<void> {
     this.recording = false;
+    this.activeToken = null;
     this.onFirstFrame = null;
     this.chunks = [];
     await this.teardown();
