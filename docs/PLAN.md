@@ -150,8 +150,9 @@ on Android Chrome.
   `decodeAudioData` in a 16k context → `floatToInt16`/`encodeWav` → diff the PCM
   region) is **byte-identical**: 0 diffs over 30037 samples, `−32768`/`+32767`
   edges correct, header fields canonical. Worklet plumbing (static-asset load +
-  `process()` pull) verified via an OfflineAudioContext render. Still to verify on
-  the device: live mic capture and the on-screen implied-rate readout (~16000 Hz).
+  `process()` pull) verified via an OfflineAudioContext render, and **confirmed
+  on-device** (13 turns): well-warmed turns read 15974–16018 Hz on the implied-rate
+  readout, flat from 0.5s to 5.5s — no rate drift, encoder validated on hardware.
 - **`DEFAULT_PIPELINE` was `openrouter-single` — the rejected pipeline — while
   CLAUDE.md locks `gemini-direct`.** A code default disagreeing with a locked
   decision. Corrected to `gemini-direct` so the Slice 3 client can omit `pipeline`
@@ -164,6 +165,28 @@ on Android Chrome.
 - **`/api/translate` now rejects non-WAV bytes** with a RIFF/WAVE magic-number
   check (400), so a worklet format regression fails loud at the endpoint instead
   of as an opaque Gemini error. All 26 clips still pass (26/26 header + live eval).
+- **Idle-wake front-of-clip loss — fixed by warming the capture graph.** On-device,
+  turns after a long idle gap lost ~177–223 ms of *leading speech* — a fixed cost
+  that correlated 13/13 with idle time (≈0 under ~12s idle, ~200 ms over ~17s),
+  independent of turn length. Cause: per-turn acquisition — the graph woke on
+  pointerdown and the first frames arrived ~200 ms after the user, who acts on the
+  OS touch-down haptic, had already started speaking. Fix: `CaptureEngine` keeps one
+  `MediaStream` + `AudioContext` + worklet graph **warm across turns** (acquired
+  lazily on first interaction, not page load; frames pulled continuously and dropped
+  when not recording so idle frames can't accumulate; re-acquired via `ensureWarm`
+  if the OS suspends/revokes on backgrounding — never capturing silence). The mic is
+  live before the tap, so the OS haptic is honest. Consequence: the mic indicator now
+  stays lit for the whole session (intended — decision 2 gates it during playback in
+  Slice 4). The visual recording state is gated on the **first real `process()`
+  frame** (not on warm-up resolving): instant when warm, a visible lag if warming
+  ever regresses — a permanent free detector for this bug.
+  - **The haptic is NOT ours.** There is no `navigator.vibrate` in the app; the
+    touch-down buzz is Android system feedback we can neither move nor suppress.
+    Warming is the only lever that makes it honest — hence not "delay the buzz."
+  - **For the eventual native rebuild (not POC work):** the ~200 ms idle-wake cost
+    may be Android audio-HAL-level (cold input path), not Chrome-level. **Not
+    investigated.** If so, a native app inherits it and needs the same always-warm-
+    input strategy — recorded so it isn't rediscovered from scratch.
 
 **Done when:** holding a button on a real Android phone captures WAV, posts to
 `/api/translate`, and returns a correct translation — verified on a Vercel

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import HoldToTalk from "@/components/HoldToTalk";
-import type { Recording } from "@/lib/recorder";
+import { CaptureEngine, type Recording } from "@/lib/recorder";
 import { strings, micErrorMessages, forSide, type MicErrorKind } from "@/lib/i18n";
 import type { Side, Turn } from "@/lib/types";
 
@@ -33,6 +33,15 @@ export default function Home() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [micError, setMicError] = useState<MicErrorKind | null>(null);
 
+  // One warm capture engine shared by both halves (one mic/context for the
+  // device). Constructed here but it touches no audio until ensureWarm() runs on
+  // the first pointerdown — so nothing is acquired at page load. Disposed on unmount.
+  const engineRef = useRef<CaptureEngine | null>(null);
+  const engine = (engineRef.current ??= new CaptureEngine());
+  // Dispose the warm graph on unmount (stops the mic, closes the context). Uses
+  // the stable ref, not `engine`, so the effect runs once.
+  useEffect(() => () => void engineRef.current?.dispose(), []);
+
   function addTurn(side: Side, rec: Recording) {
     setTurns((prev) => [
       ...prev,
@@ -62,6 +71,7 @@ export default function Home() {
         <h1 className="half-heading">{strings.heading[side]}</h1>
         <HoldToTalk
           side={side}
+          engine={engine}
           onCapture={(rec) => addTurn(side, rec)}
           onError={setMicError}
           onStart={() => setMicError(null)}

@@ -2,17 +2,24 @@ import type { MicErrorKind } from "./i18n";
 import { floatToInt16, encodeWav } from "./wav";
 
 /**
- * Live capture for Slice 3+. Replaces the Slice 1 MediaRecorder (which produced
- * webm/opus on Android Chrome — rejected by both providers' inline-audio APIs)
- * with a client-side AudioWorklet that yields 16 kHz mono PCM16 WAV, matching
- * the PCM format of test-clips/*.wav. There is ONE capture path, not two behind
- * a flag.
+ * Persistent ("warm") capture engine for Slice 3+. Instead of acquiring the mic
+ * and AudioContext per turn and tearing them down after, it keeps ONE MediaStream
+ * + AudioContext + worklet graph alive across turns. The graph never idles, so
+ * there is no per-turn acquisition wake cost — the mic is already live when the
+ * user acts on the OS touch-down haptic (which is Android's, not ours; we have no
+ * navigator.vibrate to move). This kills the ~200 ms leading-speech loss seen
+ * on-device after an idle gap.
  *
- * Mechanism: an AudioContext requested at 16000 Hz (Android Chrome honours this
- * and resamples at the graph boundary — verified on-device) → mic source node →
- * pcm-recorder worklet, which posts Float32 frames. On stop we concatenate,
- * convert to Int16 and write the WAV header (lib/wav.ts). getUserMedia keeps the
- * Slice 1 constraints (echoCancellation + noiseSuppression) unchanged.
+ * Frames arrive from the worklet continuously. We accumulate them only while a
+ * turn is recording and drop them otherwise — the discard path retains nothing,
+ * so idle frames cannot accumulate into a slow leak.
+ *
+ * Acquire lazily on the first user interaction (ensureWarm from a pointerdown),
+ * never at page load — autoplay policy would leave the context suspended. One
+ * engine is shared by both halves; only one turn records at a time.
+ *
+ * getUserMedia constraints are unchanged from Slice 1 (echoCancellation +
+ * noiseSuppression); AGC/NS parity remains parked.
  */
 
 const SAMPLE_RATE = 16000;
@@ -32,32 +39,64 @@ export class RecorderError extends Error {
 export interface Recording {
   /** audio/wav — canonical 44-byte header + 16 kHz mono PCM16. */
   blob: Blob;
-  /** Always "audio/wav" now; kept so callers/session memory keep a stable shape. */
+  /** Always "audio/wav"; kept so callers/session memory keep a stable shape. */
   mimeType: string;
-  /**
-   * Wall-clock capture duration in seconds, measured independently of the sample
-   * count. This is what lets the UI compute an implied sample rate that would
-   * expose a worklet silently running at 48k — a sample-derived duration couldn't.
-   */
+  /** Wall-clock capture duration (independent of sample count) for the implied-rate readout. */
   durationSec: number;
 }
 
-/**
- * A single hold-to-talk session. `start` is called from the pointerdown handler
- * so the AudioContext is created and resumed inside the user gesture — autoplay
- * policy leaves it suspended otherwise, and that failure is silent. `stop` tears
- * the graph down and closes the context so the OS mic indicator clears.
- */
-export class MicRecorder {
+export class CaptureEngine {
   private ctx: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private node: AudioWorkletNode | null = null;
+
+  private recording = false;
   private chunks: Float32Array[] = [];
   private startedAt = 0;
+  private onFirstFrame: (() => void) | null = null;
 
-  async start(): Promise<void> {
-    // Create + resume the context first, synchronously within the gesture.
+  // Set when the OS revokes the stream or the context dies (e.g. on backgrounding).
+  // The next ensureWarm then fully re-acquires rather than capturing silence.
+  private needsReacquire = false;
+  private warming: Promise<void> | null = null;
+
+  /**
+   * Ensure a live, running capture graph. Idempotent; safe to call on every
+   * pointerdown, and MUST be called from within a user gesture (so resume() and
+   * getUserMedia are permitted). Repairs a suspended context (resume) or a
+   * revoked stream / closed context (full re-acquire). Concurrent calls share
+   * one in-flight acquisition.
+   */
+  async ensureWarm(): Promise<void> {
+    if (this.warming) return this.warming;
+    this.warming = this.doEnsureWarm().finally(() => {
+      this.warming = null;
+    });
+    return this.warming;
+  }
+
+  private async doEnsureWarm(): Promise<void> {
+    const trackLive =
+      !!this.stream && this.stream.getAudioTracks().some((t) => t.readyState === "live");
+    const ctxDead = !this.ctx || this.ctx.state === "closed";
+    if (this.needsReacquire || ctxDead || !this.node || !trackLive) {
+      await this.teardown();
+      await this.acquire();
+      this.needsReacquire = false;
+      return;
+    }
+    // Healthy graph but the OS may have suspended it on backgrounding — resume.
+    if (this.ctx && this.ctx.state !== "running") {
+      try {
+        await this.ctx.resume();
+      } catch {
+        // Left non-running; the next tap retries. Better than capturing silence.
+      }
+    }
+  }
+
+  private async acquire(): Promise<void> {
     let ctx: AudioContext;
     try {
       const AC: typeof AudioContext =
@@ -68,14 +107,15 @@ export class MicRecorder {
       throw new RecorderError("unavailable", err);
     }
     this.ctx = ctx;
+    ctx.onstatechange = () => {
+      if (this.ctx && this.ctx.state === "closed") this.needsReacquire = true;
+    };
     try {
       await ctx.resume();
     } catch {
-      // A suspended context still produces no frames; surfaced later as 0 bytes.
+      // A suspended context produces no frames; surfaced as a late/short clip.
     }
 
-    // getUserMedia constraints unchanged from Slice 1 (AGC/NS parity is a
-    // separate open question, not this step's).
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -90,6 +130,13 @@ export class MicRecorder {
       throw new RecorderError("unavailable", err);
     }
     this.stream = stream;
+    // If the OS revokes the mic (backgrounding, another app grabbing it), flag
+    // for re-acquire so we never sit on a dead track thinking it is warm.
+    for (const t of stream.getAudioTracks()) {
+      t.onended = () => {
+        this.needsReacquire = true;
+      };
+    }
 
     try {
       await ctx.audioWorklet.addModule(WORKLET_URL);
@@ -99,32 +146,61 @@ export class MicRecorder {
         channelCount: 1,
       });
       this.node = node;
-      this.chunks = [];
       node.port.onmessage = (e: MessageEvent) => {
-        // One render quantum of mono Float32, buffer transferred to us.
+        // Continuous frames. Drop unless a turn is recording — retain nothing
+        // when idle, so discarded frames cannot accumulate.
+        if (!this.recording) return;
         this.chunks.push(e.data as Float32Array);
+        if (this.onFirstFrame) {
+          const cb = this.onFirstFrame;
+          this.onFirstFrame = null;
+          cb();
+        }
       };
-
       const source = ctx.createMediaStreamSource(stream);
       this.source = source;
       source.connect(node);
-      // Connect to destination to keep process() pulled; output stays silent.
+      // Keep process() pulled; the worklet's output is silent, so no feedback.
       node.connect(ctx.destination);
     } catch (err) {
       await this.teardown();
       throw new RecorderError("unavailable", err);
     }
+  }
 
+  /** True while a turn is being captured. */
+  isRecording(): boolean {
+    return this.recording;
+  }
+
+  /**
+   * Begin accumulating frames for one turn. `onFirstFrame` fires on the first
+   * frame that actually arrives after this call — the real readiness signal the
+   * UI gates its recording state on (instant when warm, visibly late if warming
+   * ever regresses: a free detector for the front-loss bug). No-op if already
+   * recording, so a second concurrent press can't corrupt the buffer.
+   */
+  startRecording(onFirstFrame: () => void): void {
+    if (this.recording) return;
+    this.chunks = [];
+    this.onFirstFrame = onFirstFrame;
+    this.recording = true;
     this.startedAt = performance.now();
   }
 
-  /** Resolves with the captured WAV + wall-clock duration. Safe to call once per start. */
-  async stop(): Promise<Recording> {
+  /**
+   * End the turn. Returns the WAV + wall-clock duration, or null if no turn was
+   * in progress (e.g. the button was released during warm-up, before recording
+   * actually began).
+   */
+  async stopRecording(): Promise<Recording | null> {
+    if (!this.recording) return null;
     const durationSec = this.startedAt ? (performance.now() - this.startedAt) / 1000 : 0;
+    this.recording = false;
+    this.onFirstFrame = null;
     const chunks = this.chunks;
     this.chunks = [];
-    // Detach the graph and close the context first so the mic indicator clears.
-    await this.teardown();
+    this.startedAt = 0;
 
     let total = 0;
     for (const c of chunks) total += c.length;
@@ -144,29 +220,45 @@ export class MicRecorder {
     };
   }
 
+  /** Full teardown — stops the mic and closes the context. For unmount. */
+  async dispose(): Promise<void> {
+    this.recording = false;
+    this.onFirstFrame = null;
+    this.chunks = [];
+    await this.teardown();
+  }
+
   private async teardown(): Promise<void> {
     try {
       this.source?.disconnect();
     } catch {
       /* already gone */
     }
-    try {
-      this.node?.disconnect();
-    } catch {
-      /* already gone */
-    }
-    this.stream?.getTracks().forEach((t) => t.stop());
-    if (this.ctx && this.ctx.state !== "closed") {
+    if (this.node) {
+      this.node.port.onmessage = null;
       try {
-        await this.ctx.close();
+        this.node.disconnect();
       } catch {
-        /* already closing */
+        /* already gone */
+      }
+    }
+    this.stream?.getTracks().forEach((t) => {
+      t.onended = null;
+      t.stop();
+    });
+    if (this.ctx) {
+      this.ctx.onstatechange = null;
+      if (this.ctx.state !== "closed") {
+        try {
+          await this.ctx.close();
+        } catch {
+          /* already closing */
+        }
       }
     }
     this.node = null;
     this.source = null;
     this.stream = null;
     this.ctx = null;
-    this.startedAt = 0;
   }
 }
