@@ -73,21 +73,25 @@ export default function Home() {
       fd.append("sourceLang", side);
       const res = await fetch("/api/translate", { method: "POST", body: fd });
       const requestMs = Math.round(performance.now() - started);
-      let data: { original?: unknown; translation?: unknown } | null = null;
+      let data:
+        | { original?: unknown; translation?: unknown; error?: unknown; detail?: unknown }
+        | null = null;
       try {
         data = await res.json();
       } catch {
         data = null;
       }
       if (!res.ok) {
-        // Keep the two failure sources distinct: 400 means our capture sent bad
-        // bytes (form / sourceLang / non-WAV), 502 means the model returned garbage.
+        // Surface the route's own error + detail rather than a blanket "· model".
+        // The route already distinguishes a genuine model failure ("model returned
+        // malformed output") from a server/config one ("translation failed", e.g. a
+        // missing GEMINI_API_KEY) — collapsing both to "model" actively misdirected
+        // on the missing-key 502. detail carries the specifics (e.g. the key error).
+        const routeError = data && typeof data.error === "string" ? data.error : "";
+        const routeDetail = data && typeof data.detail === "string" ? data.detail : "";
         const errorLabel =
-          res.status === 400
-            ? "HTTP 400 · capture"
-            : res.status === 502
-              ? "HTTP 502 · model"
-              : `HTTP ${res.status}`;
+          `HTTP ${res.status} · ${routeError || "error"}` +
+          (routeDetail ? ` · ${routeDetail}` : "");
         updateTurn(id, { status: "error", errorLabel, requestMs });
         return;
       }
