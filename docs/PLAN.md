@@ -195,18 +195,22 @@ on Android Chrome.
   below): the ~3.3s is a complete-time upper bound, not a measured floor, so the
   overlap-vs-Live-API decision needs the real time-to-first-token first. Recorded,
   not acted on.
-- **OPEN — Tamil utterance-initial numbers dropped from the transcription.**
-  On-device, a number at position one is *absent* from `original` (not mistranslated),
-  while the same number mid-utterance transcribes fine: `ஐயா, இதுல ஒரு பீஸ்` drops it,
-  `இந்த dress-க்கு 5000 bill போடு` keeps it. Two hypotheses, different fixes: (1)
-  residual *constant* front-of-clip capture loss clipping the first word's onset —
-  invisible in the debug row, and consistent with `ta-13` passing in eval since those
-  ffmpeg clips have no press-and-speak boundary; (2) model behaviour on a bare
-  utterance-initial numeral with no preceding context. To be settled with the retained
-  WAV (decision 4), not speculation — a **temporary** WAV-download affordance on the
-  debug row lets a matched pair (same number, initial vs mid) be pulled off the phone
-  and re-run through the endpoint from the eval path: same bytes + same endpoint
-  separates capture loss from model behaviour definitively. No fix until settled.
+- **RESOLVED — Tamil utterance-initial `ஐயாயிரம்` (5000) is misheard as `ஐயா`, not
+  dropped.** Both device failures opened with `ஐயா` (`ஐயா, இதோ` and `ஐயா, இதுல ஒரு
+  பீஸ்`). Settled with the retained WAV (decision 4) via the temporary download
+  affordance; both earlier hypotheses are dead: (1) **capture exonerated** — all four
+  waveforms show clean silence-then-onset, nothing starts at sample zero; (2) **not a
+  context-free-numeral limit** — a bare utterance-initial `5000` transcribed correctly.
+  The real cause is a **lexical prior**: utterance-initially both `ஐயாயிரம்` (5000) and
+  `ஐயா` (a common address form) fit, and the more frequent word wins; mid-utterance
+  `ஐயா` doesn't fit the syntax, so the number survives (`இந்த dress-க்கு 5000 bill போடு`
+  keeps it). **Deterministic**, not sampling variance: the failing clip run 5× through
+  `gemini-direct` returned `ஐயா, இதோ பில் போடுங்க.` identically all five times. The clip
+  is kept local as `test-clips/probe-initial-number.wav` (gitignored, deliberately
+  outside the numbered set); **not** added to `ground-truth.json` — a 27th entry would
+  silently shift the 26-clip Slice 2 baseline. Whether to build a curated
+  utterance-initial-number clip set is deferred until after this result. No fix, no
+  prompt change this slice.
 
 **Done when:** holding a button on a real Android phone captures WAV, posts to
 `/api/translate`, and returns a correct translation — verified on a Vercel
@@ -243,6 +247,14 @@ usually the weaker one.
   in `/api/speak` before synthesis — this is where the held "romanisation" work
   belongs, not in the translation prompt. Preserves decision 5 (loanword survives,
   only script changes). See CLAUDE.md → TTS.
+  - **Romanisation appears one stage earlier than we'd been treating it — in the STT
+    transcription, not just translation/TTS.** On-device (2026-08-11), one turn's
+    `original` came back as `5000 bill podunga` — romanised Tamil in the transcription
+    `original`, before any translation or TTS step. So a pre-TTS transliteration step
+    fixes the *spoken* path but not the `original` itself; the drift originates in the
+    model's transcription. Intermittent (the `probe-initial-number` clip's 5 runs were
+    all in Tamil script), consistent with the ~19%-romanised Slice 2 eval finding.
+    Recorded, not acted on.
   - *Dead end recorded (no commit to find):* a prompt-level rule forcing
     whole-sentence target-script output was tried **in the working tree** during
     Slice 2. It only partially worked (some clips moved to target script, others
