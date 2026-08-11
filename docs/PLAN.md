@@ -187,6 +187,26 @@ on Android Chrome.
     may be Android audio-HAL-level (cold input path), not Chrome-level. **Not
     investigated.** If so, a native app inherits it and needs the same always-warm-
     input strategy — recorded so it isn't rediscovered from scratch.
+- **First translate-leg latency off localhost (on-device, mobile network).**
+  Complete-time (not TTFT) for the `/api/translate` call, 8 turns: 1562, 1675, 2289,
+  3201, 3347, 3604, 4028, 4275 ms — **median ~3.3s, only 2/8 under 2s.** Against the
+  sub-2s release-to-speak target (decision 3) this is a serious gap. It makes
+  **measuring translate TTFT the first task of Slice 4** (see the Slice 4 TTFA notes
+  below): the ~3.3s is a complete-time upper bound, not a measured floor, so the
+  overlap-vs-Live-API decision needs the real time-to-first-token first. Recorded,
+  not acted on.
+- **OPEN — Tamil utterance-initial numbers dropped from the transcription.**
+  On-device, a number at position one is *absent* from `original` (not mistranslated),
+  while the same number mid-utterance transcribes fine: `ஐயா, இதுல ஒரு பீஸ்` drops it,
+  `இந்த dress-க்கு 5000 bill போடு` keeps it. Two hypotheses, different fixes: (1)
+  residual *constant* front-of-clip capture loss clipping the first word's onset —
+  invisible in the debug row, and consistent with `ta-13` passing in eval since those
+  ffmpeg clips have no press-and-speak boundary; (2) model behaviour on a bare
+  utterance-initial numeral with no preceding context. To be settled with the retained
+  WAV (decision 4), not speculation — a **temporary** WAV-download affordance on the
+  debug row lets a matched pair (same number, initial vs mid) be pulled off the phone
+  and re-run through the endpoint from the eval path: same bytes + same endpoint
+  separates capture loss from model behaviour definitively. No fix until settled.
 
 **Done when:** holding a button on a real Android phone captures WAV, posts to
 `/api/translate`, and returns a correct translation — verified on a Vercel

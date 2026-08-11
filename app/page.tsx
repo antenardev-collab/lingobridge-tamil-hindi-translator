@@ -108,6 +108,23 @@ export default function Home() {
     return Math.round((t.blob.size - 44) / 2 / t.durationSec);
   }
 
+  // TEMPORARY Slice 3 debug affordance — download a turn's retained raw WAV
+  // (locked decision 4) from the phone to inspect the capture waveform for the
+  // utterance-initial number-drop investigation. Throwaway, same status as /diag
+  // was — remove once capture-loss vs model-behaviour is settled.
+  function downloadTurn(t: Turn) {
+    const url = URL.createObjectURL(t.blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `turn-${t.side}-${new Date(t.timestamp)
+      .toISOString()
+      .replace(/[:.]/g, "-")}.wav`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   // Every turn shows on BOTH halves: the speaker's side shows `original`, the
   // listener's side shows `translation` — each already in that side's script.
   // Debug text only (locked decision 6); the capture debug row is speaker-side.
@@ -145,7 +162,11 @@ export default function Home() {
                     {formatBytes(t.blob.size)} · {t.durationSec.toFixed(2)}s ·{" "}
                     {rate === null ? "—" : `~${rate} Hz`}
                     {t.requestMs != null ? ` · ${t.requestMs} ms` : ""} ·{" "}
-                    {formatTime(t.timestamp)}
+                    {formatTime(t.timestamp)}{" "}
+                    {/* TEMPORARY debug: download raw WAV (see downloadTurn). */}
+                    <button type="button" className="turn-dl" onClick={() => downloadTurn(t)}>
+                      ⬇ wav
+                    </button>
                   </div>
                 )}
               </div>

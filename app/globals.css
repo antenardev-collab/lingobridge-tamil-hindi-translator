@@ -111,6 +111,17 @@ body {
   background: rgba(224, 54, 76, 0.18);
 }
 
+/* TEMPORARY Slice 3 debug: raw-WAV download link on the debug row. */
+.turn-dl {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #7db3ff;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .turn-empty {
   opacity: 0.55;
   font-style: italic;
