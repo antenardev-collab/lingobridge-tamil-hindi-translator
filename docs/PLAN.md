@@ -101,9 +101,27 @@ two-word turns).
 
 ---
 
-## Slice 3 — Live capture to the endpoint
+## Slice 3 — Live capture to the endpoint ✅ COMPLETE (2026-08-11)
 
-**The real work is the capture rewrite.** OpenRouter `input_audio` and Gemini
+**Delivered:** AudioWorklet capture emitting 16kHz mono PCM16 WAV (canonical
+44-byte header), encoder byte-identical to ground-truth PCM on a decode→encode
+round-trip and verified on-device at **15925–16364 Hz** across live turns; a
+persistent `CaptureEngine` keeping the mic/context/graph warm across turns,
+eliminating the ~200 ms idle-wake front-of-clip loss; an ownership-token fix so a
+simultaneous hold on both halves can't send one speaker's audio under the other's
+`sourceLang`; and each half wired to `/api/translate` with per-side parallel state
+(never blocking capture, no cancellation) and a 400 / 502 / network error taxonomy
+that surfaces the route's own `error`+`detail`. On-screen text stays a debug aid
+only (decision 6); raw WAV retained per turn in session memory (decision 4).
+
+**Carried into Slice 4** (recorded in the findings below): the deterministic
+`ஐயாயிரம்` → `ஐயா` utterance-initial mishearing (a model lexical-prior quality
+issue, not capture); STT-stage romanisation as a problem *distinct* from
+TTS-stage romanisation (pre-TTS transliteration won't fix the transcription
+`original`); and the sub-2s latency gap, which makes measuring translate TTFT the
+first Slice 4 task.
+
+**The real work was the capture rewrite.** OpenRouter `input_audio` and Gemini
 inline audio both reject the `webm/opus` that Slice 1's `MediaRecorder` produces
 on Android Chrome.
 
@@ -131,7 +149,7 @@ on Android Chrome.
 > re-encode `test-clips/*.wav`** — they are ground truth; altering them invalidates
 > the baseline permanently.
 
-### Slice 3 findings so far (2026-08-10)
+### Slice 3 findings (2026-08-10 – 08-11)
 
 - **Device honours `sampleRate: 16000`.** Verified on the real Android phone
   (Chrome 150): a requested 16k `AudioContext` reports 16000 (default is 48000,
@@ -188,9 +206,10 @@ on Android Chrome.
     investigated.** If so, a native app inherits it and needs the same always-warm-
     input strategy — recorded so it isn't rediscovered from scratch.
 - **First translate-leg latency off localhost (on-device, mobile network).**
-  Complete-time (not TTFT) for the `/api/translate` call, 8 turns: 1562, 1675, 2289,
-  3201, 3347, 3604, 4028, 4275 ms — **median ~3.3s, only 2/8 under 2s.** Against the
-  sub-2s release-to-speak target (decision 3) this is a serious gap. It makes
+  Complete-time (not TTFT) for the `/api/translate` call. First run, 8 turns: 1562,
+  1675, 2289, 3201, 3347, 3604, 4028, 4275 ms — **median ~3.3s, only 2/8 under 2s.**
+  A second, shorter-turn run: **1759 / 1769 / 2033 ms.** Against the sub-2s
+  release-to-speak target (decision 3) this is a serious gap. It makes
   **measuring translate TTFT the first task of Slice 4** (see the Slice 4 TTFA notes
   below): the ~3.3s is a complete-time upper bound, not a measured floor, so the
   overlap-vs-Live-API decision needs the real time-to-first-token first. Recorded,
