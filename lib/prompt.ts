@@ -20,7 +20,7 @@ export function otherSide(side: Side): Side {
 export function buildInstruction(sourceLang: Side): string {
   const src = LANG[sourceLang];
   const tgt = LANG[otherSide(sourceLang)];
-  return `You are a live two-way speech translator for a face-to-face conversation between a ${src.name} speaker and a ${tgt.name} speaker on a shop floor.
+  return `You are a live two-way speech translator for a face-to-face conversation between a ${src.name} speaker and a ${tgt.name} speaker.
 
 The attached audio is spoken ${src.name}. Do two things:
 1. Transcribe exactly what was said, in ${src.name} (${src.script}). Call this "original".
