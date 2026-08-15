@@ -401,6 +401,11 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     9,079ms — five outliers across unrelated sessions, not one fluke.
     **4c needs a timeout-and-abandon policy as a design input, not an
     afterthought.**
+  - **Three more tail outliers (2026-08-16), sub-50ms transport.** 14,970ms,
+    7,813ms, 6,948ms, all local runs. On record now: 10,150ms / 27,277ms /
+    53,093ms / 10,203ms / 9,079ms / 14,970ms / 7,813ms / 6,948ms — eight
+    outliers across unrelated sessions and environments. The pattern is now
+    consistent, not incidental.
   - **`x-vercel-id` is NOT the execution region — cost us a wrong conclusion
     once, recording so it doesn't happen again.** A production sanity POST from
     Chennai read `vercelId: "bom1::…"` off the request header and was briefly
@@ -587,6 +592,46 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     required) vs. `SkippedTurn` (gate-trip evidence only, no audio fields at
     all) — so decision 4's raw-audio-retention guarantee is compiler-enforced
     for every real turn again, not just documented in a comment.
+  - **Amplitude readout added (2026-08-16) — measurement only, no gate
+    built.** `lib/recorder.ts` now computes RMS + peak amplitude from the
+    Float32 samples (after the duration gate passes, before encoding) and
+    surfaces both in dBFS in the debug row and `exportTurn`. Behaviourally
+    inert — reads and reports, gates nothing. Desktop calibration run
+    (Windows desktop Chrome, home environment with background noise,
+    warm-up turns excluded):
+
+    | Group | RMS dBFS range | n |
+    |---|---|---|
+    | Non-speech, quiet room | −67.0 … −62.9 | 4 |
+    | Non-speech, background (TV, voices) | −65.8 … −56.9 | 4 |
+    | Quiet speech | −44.3 … −24.1 | 5 |
+    | Normal speech | −38.8 … −21.5 | 3 |
+
+    - **A usable separation exists on desktop.** 12.6 dB between the loudest
+      non-speech (−56.9) and the quietest speech (−44.3), with nothing in
+      between. Candidate threshold **−52 dBFS RMS**, biased toward the noise
+      ceiling because eating real speech is a worse failure than passing a
+      fabrication.
+    - **RMS is the discriminator, not peak.** The peak gap is only 7.4 dB
+      (−33.6 vs −26.2) — a single transient in a silent room rivals a soft
+      voice. Decide on RMS; keep peak diagnostic only.
+    - **Browser noise suppression is doing much of the work.**
+      Background-on non-speech sits only ~6 dB above a silent room, so the
+      TV and voices were largely stripped before the samples reached us.
+      The gate is therefore partly dependent on browser NS behaviour, which
+      native Android may not reproduce.
+    - **The threshold is not yet chosen.** These are desktop numbers —
+      different mic, different AGC, different NS from the target Android
+      device. Phone calibration on the deployed build comes before any
+      constant is set.
+    - **Fabrication reconfirmed.** All 8 non-speech turns across two
+      separate page sessions returned the character-identical sentence
+      `இந்த ஆர்டர் எப்ப வரும்?`, at RMS values spanning 11 dB. Twelve
+      observations total now across the session.
+    - **Quiet speech degrades STT before it degrades the gate.** The
+      quietest speech clip (−44.3 dBFS) mis-transcribed `சரி` as `ஸாரி` — a
+      second reason not to set the threshold aggressively: turns nearest
+      the line are already fragile.
 - **4c — TTS route** (`/api/speak`): Gemini native TTS, streaming, playback on the
   first chunk, per-side fixed voice, mic hard-gate on `play()` + unmute on `ended`
   + 250ms (decision 2). Do **not** pipeline translate→TTS this slice (measured TTFA
