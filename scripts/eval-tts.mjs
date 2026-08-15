@@ -27,13 +27,17 @@ import {
   readdirSync,
 } from "node:fs";
 import { join, basename } from "node:path";
+// Slice 4b: the transliterator moved to lib/ (guarded, tested) — this script
+// no longer keeps its own copy. See lib/transliterate.ts for why the import
+// specifier needs the .ts extension here (plain-node resolution, not Next's
+// bundler) and why lib/transliterate.ts itself avoids extensionless sibling
+// imports so this keeps working.
+import { guardedTransliterate } from "../lib/transliterate.ts";
 
 // Gemini 2.5 Flash Preview TTS pricing, USD per 1M tokens (ai.google.dev/pricing).
 const TTS_TEXT_PER_M = 0.5;
 const TTS_AUDIO_PER_M = 10.0;
-// gemini-3.1-flash-lite text pricing, for the transliteration calls.
-const XLIT_TEXT_IN_PER_M = 0.25;
-const XLIT_TEXT_OUT_PER_M = 1.5;
+// Transliteration pricing now lives in lib/transliterate.ts, next to the call.
 const USD_INR = 88;
 
 const RESULTS_DIR = "eval-results";
@@ -52,7 +56,6 @@ function parseArgs(argv) {
 }
 const args = parseArgs(process.argv.slice(2));
 const ttsModel = args.model || "gemini-2.5-flash-preview-tts";
-const xlitModel = args["translit-model"] || "gemini-3.1-flash-lite";
 const voice = args.voice || "Kore";
 
 // Pacing: keep total request rate at/under --rpm (default 12/min). --delay=<ms>
@@ -81,10 +84,6 @@ function newestResults() {
   return join(RESULTS_DIR, files[files.length - 1]);
 }
 
-function otherScript(sourceLang) {
-  return sourceLang === "ta" ? "Devanagari (Hindi) script" : "Tamil script";
-}
-
 // ---------------------------------------------------------------------------
 function pcmToWav(pcm, sampleRate, channels = 1, bits = 16) {
   const blockAlign = (channels * bits) / 8;
@@ -104,17 +103,6 @@ function pcmToWav(pcm, sampleRate, channels = 1, bits = 16) {
   h.write("data", 36);
   h.writeUInt32LE(pcm.length, 40);
   return Buffer.concat([h, pcm]);
-}
-
-// Map any Devanagari (०-९) or Tamil (௦-௯) digit back to ASCII, so the
-// transliterator can never change a number's script — the only difference
-// between a base/translit pair must be the loanword letters.
-function normalizeDigits(s) {
-  return s.replace(/[०-९௦-௯]/g, (ch) => {
-    const c = ch.codePointAt(0);
-    const base = c >= 0x0be6 ? 0x0be6 : 0x0966;
-    return String(c - base);
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -266,37 +254,6 @@ async function synth(text, label) {
   throw new Error(`${label}: no audio after ${variants.length} short-input variants (finishReason OTHER)`);
 }
 
-async function transliterate(text, sourceLang) {
-  const prompt =
-    `Rewrite the text below so any words currently in Latin/English letters are ` +
-    `written phonetically in ${otherScript(sourceLang)}. Keep the meaning, wording, ` +
-    `and order identical. Do NOT change any digits or numbers — leave every digit ` +
-    `exactly as written, in the same Latin/Arabic numerals (e.g. 8000 stays 8000). ` +
-    `Output only the rewritten text.\n\nText: ${text}`;
-  const ctx = { attempts: 0, causes: [] };
-  const { json } = await requestWithRetry(
-    xlitModel,
-    { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0 } },
-    "translit",
-    ctx,
-  );
-  // Strip intra-word hyphens the transliterator inserts (e.g. "வொர்க்-கு"): a
-  // hyphen between two script letters makes Gemini TTS 400 ("tried to generate
-  // text"), and it is a romanisation artifact, not part of the word.
-  const out = normalizeDigits(
-    (json?.candidates?.[0]?.content?.parts || [])
-      .map((p) => p.text ?? "")
-      .join("")
-      .trim(),
-  ).replace(/(?<=\S)[-–—](?=\S)/gu, "");
-  const um = json.usageMetadata || {};
-  const costUsd =
-    ((um.promptTokenCount || 0) * XLIT_TEXT_IN_PER_M +
-      (um.candidatesTokenCount || 0) * XLIT_TEXT_OUT_PER_M) /
-    1e6;
-  return { text: out, costUsd };
-}
-
 const money = (usd) => `$${usd.toFixed(6)} (₹${(usd * USD_INR).toFixed(4)})`;
 const triesLabel = (r) => (r.attempts > 1 ? ` (${r.attempts} tries: ${r.causes.join(", ")})` : "");
 
@@ -401,7 +358,11 @@ async function main() {
         skipped++;
       } else {
         try {
-          const x = await transliterate(r.translation, r.sourceLang);
+          const x = await guardedTransliterate({
+            original: r.original,
+            translation: r.translation,
+            sourceLang: r.sourceLang,
+          });
           const tb = await synth(x.text, `${stem}-translit`);
           writeFileSync(join(outDir, tName), tb.wav);
           total += x.costUsd + tb.costUsd;
