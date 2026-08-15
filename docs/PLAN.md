@@ -99,6 +99,18 @@ meaning "about", not the number 1; models produce 15 or 1), **hi-08**
 (money — the highest-stakes failures), **ta-11 / ta-12 / hi-11** (one- and
 two-word turns).
 
+**Live capture and the eval baseline are not the same signal (2026-08-15,
+noted here since it bears on how to read eval numbers — Slice 2 itself is
+unchanged).** Live capture (`lib/recorder.ts`) requests `getUserMedia({
+echoCancellation: true, noiseSuppression: true })`; `autoGainControl` is left
+to the browser default. The 26 `test-clips/*.wav` are raw ffmpeg recordings
+with none of that processing applied. This does **not** invalidate the
+Pipeline A/B lock above — both pipelines were scored against the identical
+unprocessed clips, so that comparison stayed apples-to-apples. But an eval
+score is not a prediction of live on-device behaviour: any future
+live-vs-eval discrepancy should consider capture-side signal processing as a
+candidate cause before suspecting the model.
+
 ---
 
 ## Slice 3 — Live capture to the endpoint ✅ COMPLETE (2026-08-11)
@@ -317,6 +329,12 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     1.3–3.5s. Not config-specific — inconsistent with any of the levers tested
     so far. **The eventual latency target needs a p90/p99 and a timeout/retry
     policy, not just a median** — a single mean or median hides this.
+  - **Worse tail sample recorded (2026-08-15).** A 27,277ms server-side turn
+    (`serverTotalMs`) was observed on a one-word utterance from the local dev
+    server — worse than the 10,150ms outlier above. Transport was 25–78ms, so
+    this is effectively all time inside the Gemini call, not client/network
+    overhead. Reinforces the need for a timeout/retry policy (already flagged
+    above); **not acted on this session** — recorded so it isn't lost.
   - **`x-vercel-id` is NOT the execution region — cost us a wrong conclusion
     once, recording so it doesn't happen again.** A production sanity POST from
     Chennai read `vercelId: "bom1::…"` off the request header and was briefly
@@ -464,6 +482,45 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
      Currently logged only, in-memory, no UI. A sustained outage needs to be
      visible to a user/operator in real time, not just discoverable after the
      fact in an exported log — not designed or built yet.
+- **4b.2 — client-side minimum-duration gate (2026-08-15, not part of the
+  original six-slice plan).** Added after a live accidental press: a 92ms tap
+  (`payloadBytes` 3116 — 1536 samples after the 44-byte WAV header) was
+  POSTed to `/api/translate`, and the model returned a fluent, plausible,
+  domain-typical sentence (`இந்த டிசைன்ல வேற கலர் இருக்கா?`) from audio that
+  cannot possibly contain it. Confirmed as an accidental press. **Input
+  validation, not a model fix** — the model did what it's asked to do
+  (transcribe+translate whatever audio it's given); the bug was sending audio
+  that isn't speech at all.
+  - **Mechanism.** `CaptureEngine.stopRecording()` (`lib/recorder.ts`) checks
+    the captured sample count — not wall-clock press duration, since the two
+    can diverge — before `floatToInt16`/`encodeWav` run and before the POST.
+    Below threshold the turn is discarded silently: no audio sent, no error
+    state, no toast (the speaker didn't mean to speak), and it's recorded in
+    the debug turn list as a distinguishable `"gated"` entry (dashed styling,
+    separate from a failed turn) carrying `gatedSamples`/`gatedImpliedMs`, so
+    real-use trip frequency can be counted. Gated entries appear correctly in
+    the copy-timings JSON export.
+  - **Threshold: `MIN_TURN_MS = 300`** (→ 4800 samples at 16kHz), a single
+    named constant. Derived from on-device measurement, not guessed: three
+    confirmed accidental taps at 1920/120ms, 1408/88ms, 1152/72ms — all
+    silently gated, none produced a network request. Real short speech passed
+    clean: `சரி` at 1002/1059/1220ms, `ஆமா` at 1226/1382ms. The shortest real
+    utterance measured is ~8× the longest accidental tap, so 300ms sits in
+    empty space between the two populations. Threshold verified, unchanged.
+  - **Stated limitation: this gate blocks accidental taps only.** It does not
+    and cannot block a genuine press that captures room noise or silence —
+    that press is real, deliberate, and well over 300ms. In the same test
+    session, five separate no-speech turns (637/764/972/1207/1460ms, all
+    comfortably above threshold) returned the character-identical fabricated
+    sentence `இந்த டிசைன்ல வேற கலர் இருக்கா?` on every one. **Fabrication
+    from genuine non-speech audio is unaddressed** and is not the same
+    problem as the accidental-press bug this gate closes — a duration gate
+    cannot solve it, because the audio duration is legitimate.
+  - **Type-system follow-up (same date).** `Turn` (`lib/types.ts`) is now a
+    discriminated union — `CapturedTurn` (`blob`/`mimeType`/`durationSec`
+    required) vs. `SkippedTurn` (gate-trip evidence only, no audio fields at
+    all) — so decision 4's raw-audio-retention guarantee is compiler-enforced
+    for every real turn again, not just documented in a comment.
 - **4c — TTS route** (`/api/speak`): Gemini native TTS, streaming, playback on the
   first chunk, per-side fixed voice, mic hard-gate on `play()` + unmute on `ended`
   + 250ms (decision 2). Do **not** pipeline translate→TTS this slice (measured TTFA
