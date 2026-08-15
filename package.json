@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "eval": "node scripts/eval.mjs",
-    "eval:tts": "node scripts/eval-tts.mjs"
+    "eval:tts": "node scripts/eval-tts.mjs",
+    "test": "node --test lib/transliterate.test.mjs"
   },
   "dependencies": {
     "next": "15.5.23",
