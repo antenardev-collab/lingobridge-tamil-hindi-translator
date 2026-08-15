@@ -357,9 +357,113 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     streamed-invoke would show tens–hundreds of ms at 730KB, not single digits).
     **Verdict: FLAT. The transport subtraction is sound.** No fix needed; 4a's
     numbers can be trusted going into on-device data collection.
-- **4b — harden the transliterator**, promote it into `lib/` as a pure,
-  unit-testable, no-network module — *before* the TTS route, so 4c is built around
-  it. (Already exercised on ~6 clips; threw one 400 on an intra-word hyphen.)
+- **4b — move the transliterator into `lib/`, wrapped in deterministic
+  guards. REWRITTEN 2026-08-15** — the text this replaced ("promote it into
+  `lib/` as a pure, unit-testable, no-network module") presumed a
+  deterministic mapping already existed and just needed moving. The 26-clip
+  dump (below) showed there is no mapping to promote, and there can't be one:
+  **5 of 8 triggered clips arrived with the ENTIRE sentence romanised** in an
+  ad-hoc scheme (`Blue color cut piece mudinjiduchu, naaliku eduthutu
+  vaanga`) — arbitrary Tamil/Hindi vocabulary spelled out phonetically in
+  Latin letters, not a loanword sitting in otherwise-correct script. A lookup
+  table maps known tokens to known outputs; it cannot invert an
+  open-vocabulary phonetic respelling of a language it doesn't otherwise
+  touch. **Rejected: a deterministic lookup-table transliterator — dead end,
+  do not re-propose without a fundamentally different input shape than
+  "whatever Gemini's translation happened to romanise."** The transliteration
+  call stays generative (Gemini). What's pure and testable is the guard layer
+  wrapped around it:
+  - **`lib/transliterate.ts`** — ports `transliterate` / `otherScript` /
+    `normalizeDigits` / the hyphen-strip from `scripts/eval-tts.mjs`
+    behaviourally unchanged; `scripts/eval-tts.mjs` now imports from `lib/`
+    instead of keeping its own copy (confirmed `npm run eval:tts` still runs).
+    Regression check: re-ran the 26-clip dump through the new module —
+    **0 unexplained diffs**; the one difference from the original dump is a
+    `script-purity` guard trip (see below), which changes nothing about the
+    output, only logs it.
+  - **Guard 1 — digit preservation (hard).** Ordered digit-run mismatch
+    between input and the fully post-processed output → fallback.
+  - **Guard 2 — non-empty/non-degenerate (hard).** Empty/whitespace output →
+    fallback. (The 4b inventory found `.trim()` could silently yield `""`
+    with nothing checking it — this closes that gap.)
+  - **Guard 3 — script purity (warning only, never a rejection).** Residual
+    Latin after transliteration is logged, not fixed or rejected — a
+    mispronounced word stays comprehensible; rejecting the utterance doesn't.
+    Fired once in the 26-clip regression run: `ta-09`'s `3D` (an alphanumeric
+    designator, not a loanword) survives by design, logged, output unchanged.
+  - **Hyphen strip — kept as-is, NOT a guard.** It's a Gemini TTS API 400
+    workaround (an intra-word hyphen like `வொர்க்-கு` makes TTS reject the
+    text with "tried to generate text ... should only be used for TTS"), not
+    a quality check. Do not refactor it away as redundant with the prompt
+    asking the model not to do this — it does it anyway often enough (2/8
+    triggered clips in the dump) to stay load-bearing.
+  - On a hard trip (guard 1 or 2), **or a network/API failure**: fall back to
+    the **untransliterated input text**, unchanged, and let TTS handle it
+    as-is — failing the turn outright is worse. But a network failure is a
+    **different category from a guard trip, kept structurally separate**
+    (2026-08-15 correction): a guard trip means the model answered and a
+    guard rejected the answer; a failure means the stage never ran at all.
+    That distinction matters because 5/8 triggered clips in the dump were
+    FULLY romanised sentences — a skip on one of those means TTS reads e.g.
+    `Blue color cut piece mudinjiduchu` as English (noise), not a graceful
+    single-loanword degradation. Result carries a dedicated
+    `transliterationSkipped` flag, and skips log to their own
+    `TransliterationSkipLogEntry` array (with the error message kept on the
+    record), never mixed into the guard-trip log — a run of skips (a
+    sustained outage) needs to be visible at a glance, not buried among
+    ordinary quality trips, or an outage would silently degrade every turn.
+  - **Two separate logs**: `GuardTripLogEntry[]` (guards 1/2/3) and
+    `TransliterationSkipLogEntry[]` (stage failures) — both text-only,
+    in-session, in-memory accumulator + JSON-export function in
+    `lib/transliterate.ts`, same *data-layer* pattern as 4a's copy-timings
+    button. **Neither is mounted to any UI this slice** — there's no live
+    call site to feed them, since the module isn't wired into the app
+    (below). Wiring export buttons to the debug area, AND deciding whether
+    skips need to surface on screen in real time (not just be logged), are
+    both 4c-or-later tasks — see the open question below.
+  - **Tests**: `lib/transliterate.test.mjs`, Node's built-in test runner
+    (`node --test`, `npm test`) — no new dependency. 35 cases covering every
+    pure function (`normalizeDigits`, `stripIntraWordHyphens`,
+    `hasLatinScript`, `extractDigitSequence`, `digitSequencesEqual`,
+    `isDegenerateOutput`, `otherScript`), including digits in both scripts and
+    at different string positions. The model call itself is deliberately not
+    tested.
+  - **Regression-check coverage gap.** The 26-clip regression (against real
+    model output, both pre- and post-port) exercised guard 3 (warning) and
+    the happy path only — guards 1 (digit preservation) and 2 (non-empty)
+    **never fired**, in either run, because no real model output happened to
+    trip them. The trip→fallback→return path for guards 1/2 is covered by
+    unit tests on the underlying pure functions, but **not end-to-end**
+    through `guardedTransliterate` itself. Worth an integration test with a
+    stubbed/mocked model response before 4c wires this into the live path.
+  - **Batch pacing/retry deliberately NOT ported**, and not to be re-added by
+    reflex. `scripts/eval-tts.mjs`'s `gate`/`requestOnce`/`requestWithRetry`
+    (12 req/min throttle, exponential backoff, 429 handling) exists to keep a
+    26-clip *batch* run under Gemini's rate limits — it doesn't belong in a
+    module serving one real-time turn. The live path wants fail-fast-and-
+    fall-back, not retry-with-backoff: a retry loop can cost multiple seconds
+    against a ~3.3s turn budget, which is worse than falling back immediately
+    to the untransliterated input.
+  - **Lost capability**: `scripts/eval-tts.mjs`'s `--translit-model=` CLI flag
+    is gone — the model is now fixed inside `lib/transliterate.ts` (matching
+    how the module will actually be called once wired in), not
+    caller-configurable. Fixing the model in the module is the right call,
+    but it removes the ability to A/B a different transliteration model from
+    the eval harness, and A/B comparison is exactly how the Slice 2 pipeline
+    lock was decided. Noted here so its absence isn't a surprise later.
+  - **NOT wired into `/api/translate` this slice.** See the 4c open question
+    below — do not act on it without a decision.
+- **4c open questions on `guardedTransliterate`** — unresolved, deliberately:
+  1. **Wire it into the live path, or not?** Adding it puts a **third serial
+     model call** on the ~3.3s translate-leg budget. `hasLatin` fired on 8/26
+     (31%) of ground-truth clips in the 2026-08-15 dump — roughly a third of
+     live turns would pay this latency cost if wired in at translate-time.
+     Whether that's worth it (and where in the pipeline — translate-time vs.
+     speak-time) is not decided here.
+  2. **How do transliteration skips (network/API failures) surface?**
+     Currently logged only, in-memory, no UI. A sustained outage needs to be
+     visible to a user/operator in real time, not just discoverable after the
+     fact in an exported log — not designed or built yet.
 - **4c — TTS route** (`/api/speak`): Gemini native TTS, streaming, playback on the
   first chunk, per-side fixed voice, mic hard-gate on `play()` + unmute on `ended`
   + 250ms (decision 2). Do **not** pipeline translate→TTS this slice (measured TTFA
@@ -455,6 +559,26 @@ Enrollment falls out of slices 1–4 for free. The `speaker` field in
 ground-truth.json exists to test cross-voice routing here.
 
 ---
+
+## Beyond the POC (native rebuild / beta) — NOT POC work, deferred deliberately
+
+- **Guard-trip records must eventually persist permanently, with audio and
+  translation attached — not just text.** 4b's guard-trip log (text-only,
+  in-session, no persistence, no database) is a POC-scoped placeholder, not
+  the end state.
+- **All conversations — not only tripped ones — must eventually be recorded
+  and persisted with audio.** Reasoning: the `ஐயாயிரம்` → `ஐயா` class of
+  failure (Slice 3 findings) produces **no guard trip at all** — the
+  transliterator sees perfectly valid text and every guard passes, because
+  the number was already destroyed one stage upstream, in the audio-in
+  transcription itself, before translation or transliteration ever ran. Text
+  logging — however complete — cannot catch that class of failure; only the
+  retained audio can. This is why guard-trip audio alone would be
+  insufficient and full-conversation audio persistence is the actual
+  requirement, not a nice-to-have.
+- **Both need a storage backend the POC doesn't have.** Vercel functions are
+  stateless; this project has no database (see CLAUDE.md — session state is
+  React memory only). Deferred deliberately to beta, not forgotten.
 
 ## Open items
 
