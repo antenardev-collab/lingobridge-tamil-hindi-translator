@@ -124,6 +124,13 @@ npm run lint
 npm run eval       # slice 2+ — see docs/PLAN.md
 ```
 
+## Deployment
+
+- Repo: https://github.com/antenardev-collab/lingobridge-tamil-hindi-translator
+- Production: https://lingobridge-tamil-hindi-translator.vercel.app
+- Vercel Hobby plan, single function region (IAD1 as of 2026-08). See
+  `docs/PLAN.md` → Slice 4 for the region-latency investigation.
+
 ## Testing constraints
 
 Microphone access requires HTTPS. Localhost will not give working mic capture on
