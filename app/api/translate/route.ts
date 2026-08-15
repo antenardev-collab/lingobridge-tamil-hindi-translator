@@ -22,7 +22,8 @@ function buildDebug(
   entry: number,
   exit: number,
   coldStart: boolean,
-  vercelId: string | null,
+  execRegion: string | null,
+  edgeTrace: string | null,
   timing: PipelineTiming | null,
 ): ServerDebug {
   const round = (ms: number) => Math.round(ms);
@@ -34,7 +35,8 @@ function buildDebug(
   const serverTotalMs = round(exit - entry);
   return {
     coldStart,
-    vercelId,
+    execRegion,
+    edgeTrace,
     weStream: timing?.weStream ?? false,
     entryToRequestMs,
     requestToFirstByteMs:
@@ -66,9 +68,15 @@ export async function POST(req: Request) {
   const entry = performance.now();
   const coldStart = !INSTANCE_WARMED;
   INSTANCE_WARMED = true;
-  // Vercel injects x-vercel-id on the incoming request; it encodes the region
-  // (e.g. "iad1::…"), so each measurement is self-labelling. Null off Vercel.
-  const vercelId = req.headers.get("x-vercel-id");
+  // execRegion is the AUTHORITATIVE execution region (Vercel's own docs:
+  // "The ID of the Region where the app is running", runtime-only). edgeTrace is
+  // the raw x-vercel-id request header, kept verbatim for reference only — it's
+  // edge-appended BEFORE the function runs, so it names the nearest edge PoP to
+  // the caller (e.g. bom1 for a Chennai client), NOT the execution region. That
+  // conflation already produced one wrong regional conclusion on this project —
+  // see PLAN.md → Slice 4.
+  const execRegion = process.env.VERCEL_REGION ?? null;
+  const edgeTrace = req.headers.get("x-vercel-id");
 
   let form: FormData;
   try {
@@ -138,13 +146,13 @@ export async function POST(req: Request) {
       pipeline,
       model: out.model,
       usage: out.usage,
-      debug: buildDebug(entry, exit, coldStart, vercelId, out.timing),
+      debug: buildDebug(entry, exit, coldStart, execRegion, edgeTrace, out.timing),
     });
   } catch (err) {
     const exit = performance.now();
     // No provider marks on the error path — report just the entry→exit envelope
     // so a slow *failure* is still measurable.
-    const debug = buildDebug(entry, exit, coldStart, vercelId, null);
+    const debug = buildDebug(entry, exit, coldStart, execRegion, edgeTrace, null);
     if (err instanceof TranslateValidationError) {
       // Already logged with raw text inside runTranslate; surface a clean error.
       return NextResponse.json(

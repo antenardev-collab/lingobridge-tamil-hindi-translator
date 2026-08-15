@@ -40,7 +40,8 @@ function parseServerDebug(x: unknown): ServerDebug | null {
   if (total === null) return null; // the one field the transport derivation needs
   return {
     coldStart: d.coldStart === true,
-    vercelId: typeof d.vercelId === "string" ? d.vercelId : null,
+    execRegion: typeof d.execRegion === "string" ? d.execRegion : null,
+    edgeTrace: typeof d.edgeTrace === "string" ? d.edgeTrace : null,
     weStream: d.weStream === true,
     entryToRequestMs: num(d.entryToRequestMs) ?? 0,
     requestToFirstByteMs: num(d.requestToFirstByteMs),
@@ -262,7 +263,7 @@ export default function Home() {
       );
       const tp = transportMs(tm);
       lines.push(
-        `transport ~${tp} ms${s.vercelId ? ` · ${s.vercelId}` : ""}`,
+        `transport ~${tp} ms${s.execRegion ? ` · ${s.execRegion}` : ""}`,
       );
     } else {
       lines.push("server: no debug (pre-fetch or network failure)");

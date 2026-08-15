@@ -17,8 +17,22 @@ export type TurnStatus = "loading" | "done" | "error";
 export interface ServerDebug {
   /** First invocation of this warm function instance (module-scope flag). */
   coldStart: boolean;
-  /** `x-vercel-id` (region-labelled) off the request; null off Vercel. */
-  vercelId: string | null;
+  /**
+   * `process.env.VERCEL_REGION` — Vercel's own docs: "The ID of the Region
+   * where the app is running" (runtime-only). The AUTHORITATIVE execution
+   * region. Null off Vercel, or if System Environment Variables access isn't
+   * enabled for the project.
+   */
+  execRegion: string | null;
+  /**
+   * Raw `x-vercel-id` request header, verbatim, UNPARSED. Per Vercel's docs this
+   * header accumulates region hops as the request travels and is edge-appended
+   * BEFORE the function executes — so a request-side read is the edge PoP
+   * nearest the caller, NOT the execution region. Named `edgeTrace` (not
+   * `vercelId`) specifically so it can't be mistaken for `execRegion` again —
+   * that mistake already produced one wrong regional conclusion this project.
+   */
+  edgeTrace: string | null;
   /**
    * Does OUR code stream this provider call? Names the implementation, not the
    * model's capability (the model supports streaming — we don't use it here). The

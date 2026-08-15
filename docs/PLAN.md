@@ -317,6 +317,20 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     1.3–3.5s. Not config-specific — inconsistent with any of the levers tested
     so far. **The eventual latency target needs a p90/p99 and a timeout/retry
     policy, not just a median** — a single mean or median hides this.
+  - **`x-vercel-id` is NOT the execution region — cost us a wrong conclusion
+    once, recording so it doesn't happen again.** A production sanity POST from
+    Chennai read `vercelId: "bom1::…"` off the request header and was briefly
+    taken as evidence the function itself was running in Mumbai (contradicting
+    the assumed IAD1 region). Per Vercel's own docs, `x-vercel-id` **accumulates
+    region hops as the request travels and is edge-appended before the function
+    executes** — a request-side read is the nearest edge PoP to the caller
+    (Mumbai, for a Chennai client), not where the function ran. The dashboard
+    confirmed the function region is actually `iad1`. **Fix: use
+    `process.env.VERCEL_REGION`** (Vercel's docs: "The ID of the Region where
+    the app is running", runtime-only) **as the authoritative execution region.**
+    `debug` now reports both: `execRegion` (from `VERCEL_REGION`, load-bearing)
+    and `edgeTrace` (the raw `x-vercel-id` header, kept verbatim, reference only
+    — never treat it as the execution region again).
 - **4b — harden the transliterator**, promote it into `lib/` as a pure,
   unit-testable, no-network module — *before* the TTS route, so 4c is built around
   it. (Already exercised on ~6 clips; threw one 400 on an intra-word hyphen.)
