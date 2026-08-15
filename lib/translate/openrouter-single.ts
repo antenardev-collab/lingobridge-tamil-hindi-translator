@@ -42,6 +42,9 @@ export const openrouterSingle: TranslatePipeline = {
       ],
     };
 
+    // Slice 4a marks — non-streaming (single chat/completions call). See the
+    // gemini-direct note: firstByte stays null, we report complete-time.
+    const requestSent = performance.now();
     const res = await fetch(ENDPOINT, {
       method: "POST",
       headers: {
@@ -57,6 +60,7 @@ export const openrouterSingle: TranslatePipeline = {
     }
 
     const json = await res.json();
+    const complete = performance.now();
     const content: string = json?.choices?.[0]?.message?.content ?? "";
     const result = parseTranslateResult(content);
 
@@ -79,6 +83,7 @@ export const openrouterSingle: TranslatePipeline = {
       model: model.id,
       raw: content,
       usage: { promptTokens, audioTokens, completionTokens, costUsd },
+      timing: { requestSent, firstByte: null, complete, weStream: false },
     };
   },
 };

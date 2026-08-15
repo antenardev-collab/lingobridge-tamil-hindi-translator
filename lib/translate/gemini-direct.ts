@@ -52,6 +52,12 @@ export const geminiDirect: TranslatePipeline = {
       },
     };
 
+    // Slice 4a marks. This is a non-streaming generateContent call: the fetch
+    // promise resolves only after Gemini has generated the whole reply, so
+    // header-arrival is NOT a token TTFT. We therefore record complete-time and
+    // leave firstByte null (streaming:false) rather than pass off body-download
+    // as a first-token number.
+    const requestSent = performance.now();
     const res = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -67,6 +73,7 @@ export const geminiDirect: TranslatePipeline = {
     }
 
     const json = await res.json();
+    const complete = performance.now();
     const parts: GeminiPart[] = json?.candidates?.[0]?.content?.parts ?? [];
     const content = parts.map((p) => p.text ?? "").join("");
     const result = parseTranslateResult(content);
@@ -89,6 +96,7 @@ export const geminiDirect: TranslatePipeline = {
       model: model.id,
       raw: content,
       usage: { promptTokens, audioTokens, completionTokens, costUsd },
+      timing: { requestSent, firstByte: null, complete, weStream: false },
     };
   },
 };

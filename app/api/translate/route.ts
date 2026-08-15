@@ -1,6 +1,50 @@
 import { NextResponse } from "next/server";
 import { DEFAULT_PIPELINE, isPipelineId } from "@/lib/models";
 import { runTranslate, TranslateValidationError } from "@/lib/translate";
+import type { ServerDebug } from "@/lib/types";
+import type { PipelineTiming } from "@/lib/translate/types";
+
+/**
+ * Slice 4a cold-start detector. Module scope, so it survives across invocations
+ * of one warm (Fluid) instance: true on the first request this instance serves,
+ * false thereafter. Read-then-set below so the first response reports `true`.
+ */
+let INSTANCE_WARMED = false;
+
+/**
+ * Build the server-clock latency decomposition. Every field is a delta between
+ * two marks from the SAME Node `performance.now()` clock — never mixed with the
+ * client's clock (they aren't synchronised). `timing` is null on the error path
+ * (the provider call never returned marks), so only the entry→exit envelope is
+ * reported there.
+ */
+function buildDebug(
+  entry: number,
+  exit: number,
+  coldStart: boolean,
+  vercelId: string | null,
+  timing: PipelineTiming | null,
+): ServerDebug {
+  const round = (ms: number) => Math.round(ms);
+  const entryToRequestMs = timing ? round(timing.requestSent - entry) : 0;
+  const requestToCompleteMs = timing ? round(timing.complete - timing.requestSent) : 0;
+  const completeToExitMs = timing ? round(exit - timing.complete) : 0;
+  // Measured directly as entry→exit, NOT summed from the parts, so residualMs can
+  // surface time no named interval captured (plus per-field rounding).
+  const serverTotalMs = round(exit - entry);
+  return {
+    coldStart,
+    vercelId,
+    weStream: timing?.weStream ?? false,
+    entryToRequestMs,
+    requestToFirstByteMs:
+      timing && timing.firstByte !== null ? round(timing.firstByte - timing.requestSent) : null,
+    requestToCompleteMs,
+    completeToExitMs,
+    serverTotalMs,
+    residualMs: serverTotalMs - (entryToRequestMs + requestToCompleteMs + completeToExitMs),
+  };
+}
 
 /**
  * POST /api/translate — pipeline-agnostic STT+translate.
@@ -17,6 +61,15 @@ import { runTranslate, TranslateValidationError } from "@/lib/translate";
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  // Slice 4a marks (server clock). `entry` is the earliest we can observe; read
+  // the cold-start flag here and flip it so the first invocation reports true.
+  const entry = performance.now();
+  const coldStart = !INSTANCE_WARMED;
+  INSTANCE_WARMED = true;
+  // Vercel injects x-vercel-id on the incoming request; it encodes the region
+  // (e.g. "iad1::…"), so each measurement is self-labelling. Null off Vercel.
+  const vercelId = req.headers.get("x-vercel-id");
+
   let form: FormData;
   try {
     form = await req.formData();
@@ -76,25 +129,33 @@ export async function POST(req: Request) {
       sourceLang,
       model,
     });
+    const exit = performance.now();
+    // `debug` is ADDITIVE and non-breaking: scripts/eval.mjs reads only
+    // original/translation/model/usage/error/detail and ignores unknown keys.
     return NextResponse.json({
       original: out.original,
       translation: out.translation,
       pipeline,
       model: out.model,
       usage: out.usage,
+      debug: buildDebug(entry, exit, coldStart, vercelId, out.timing),
     });
   } catch (err) {
+    const exit = performance.now();
+    // No provider marks on the error path — report just the entry→exit envelope
+    // so a slow *failure* is still measurable.
+    const debug = buildDebug(entry, exit, coldStart, vercelId, null);
     if (err instanceof TranslateValidationError) {
       // Already logged with raw text inside runTranslate; surface a clean error.
       return NextResponse.json(
-        { error: "model returned malformed output", detail: err.message },
+        { error: "model returned malformed output", detail: err.message, debug },
         { status: 502 },
       );
     }
     const detail = err instanceof Error ? err.message : "unknown error";
     console.error(`[api/translate] ${detail}`);
     return NextResponse.json(
-      { error: "translation failed", detail },
+      { error: "translation failed", detail, debug },
       { status: 502 },
     );
   }
