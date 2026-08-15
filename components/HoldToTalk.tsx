@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CaptureEngine, RecorderError, type Recording } from "@/lib/recorder";
+import { CaptureEngine, RecorderError, type GatedTurn, type Recording } from "@/lib/recorder";
 import { strings, forSide, type MicErrorKind } from "@/lib/i18n";
 import type { Side } from "@/lib/types";
 
@@ -11,6 +11,8 @@ interface HoldToTalkProps {
   engine: CaptureEngine;
   /** `releasedAt` is the pointerup mark (client clock) — the Slice 4a `release`. */
   onCapture: (rec: Recording, releasedAt: number) => void;
+  /** Called instead of onCapture when the release was below MIN_TURN_MS — a trip, not a turn. */
+  onGated: (gated: GatedTurn) => void;
   onError: (kind: MicErrorKind) => void;
   /** Called when a recording starts so the parent can clear a stale error. */
   onStart?: () => void;
@@ -25,7 +27,7 @@ interface HoldToTalkProps {
  * no pointerleave, which with capture active either won't fire on touch or
  * would misfire mid-drag on a desktop mouse and cut the recording early.
  */
-export default function HoldToTalk({ side, engine, onCapture, onError, onStart }: HoldToTalkProps) {
+export default function HoldToTalk({ side, engine, onCapture, onGated, onError, onStart }: HoldToTalkProps) {
   const [recording, setRecording] = useState(false);
   // Guards against a stop firing before warm-up resolves, or two stops racing.
   const activeRef = useRef(false);
@@ -80,8 +82,12 @@ export default function HoldToTalk({ side, engine, onCapture, onError, onStart }
     // during warm-up) — nothing to stop, nothing to report.
     if (token === null) return;
     try {
-      const rec = await engine.stopRecording(token);
-      if (rec) onCapture(rec, releasedAt);
+      const result = await engine.stopRecording(token);
+      if (result === null) return;
+      // A gate trip is silent by design (decision: the speaker didn't mean to
+      // speak) — no audio, no error state, just a debug-list entry upstream.
+      if ("gated" in result) onGated(result);
+      else onCapture(result, releasedAt);
     } catch (err) {
       if (err instanceof RecorderError) onError(err.kind);
       else onError("unavailable");

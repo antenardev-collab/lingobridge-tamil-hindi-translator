@@ -1,8 +1,12 @@
 /** Which half of the split screen a turn came from — also the source language. */
 export type Side = "ta" | "hi";
 
-/** Where a turn's translate request currently is. */
-export type TurnStatus = "loading" | "done" | "error";
+/**
+ * Where a turn's translate request currently is. "gated" is not a request
+ * state at all — it means the release never became a turn (below
+ * MIN_TURN_MS in lib/recorder.ts) and nothing was sent.
+ */
+export type TurnStatus = "loading" | "done" | "error" | "gated";
 
 /**
  * Slice 4a latency decomposition, returned by /api/translate under `debug`.
@@ -108,9 +112,10 @@ export interface TurnTiming {
 export interface Turn {
   id: string;
   side: Side;
-  blob: Blob;
-  mimeType: string;
-  durationSec: number;
+  /** Absent when status is "gated" — a gate trip never encodes audio. */
+  blob?: Blob;
+  mimeType?: string;
+  durationSec?: number;
   timestamp: number;
   status: TurnStatus;
   original?: string;
@@ -119,4 +124,8 @@ export interface Turn {
   errorLabel?: string;
   /** Slice 4a latency decomposition (client marks + server debug). */
   timing?: TurnTiming;
+  /** Set only when status is "gated": the sample count the gate acted on. */
+  gatedSamples?: number;
+  /** Set only when status is "gated": that sample count converted to ms. */
+  gatedImpliedMs?: number;
 }

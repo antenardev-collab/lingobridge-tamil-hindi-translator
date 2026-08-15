@@ -144,6 +144,14 @@ body {
   background: rgba(224, 54, 76, 0.18);
 }
 
+/* Gate trip (accidental press, below MIN_TURN_MS) — dashed and dim, never
+   red: this is not a failure, it's the mic correctly ignoring a non-turn. */
+.turn-row.turn-gated {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  opacity: 0.6;
+}
+
 .turn-empty {
   opacity: 0.55;
   font-style: italic;

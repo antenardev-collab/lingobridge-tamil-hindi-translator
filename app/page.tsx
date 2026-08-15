@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import HoldToTalk from "@/components/HoldToTalk";
-import { CaptureEngine, type Recording } from "@/lib/recorder";
+import { CaptureEngine, type GatedTurn, type Recording } from "@/lib/recorder";
 import { strings, micErrorMessages, forSide, type MicErrorKind } from "@/lib/i18n";
 import type { ServerDebug, Side, Turn, TurnTiming } from "@/lib/types";
 
@@ -64,6 +64,17 @@ function transportMs(t: TurnTiming): number | null {
  * decomposition, and the derived transport. Copied out as JSON for pasting.
  */
 function exportTurn(t: Turn) {
+  if (t.status === "gated") {
+    // A gate trip never became a turn — export just the evidence the gate
+    // acted on, not the request/timing shape of a real turn.
+    return {
+      id: t.id,
+      side: t.side,
+      status: t.status,
+      gatedSamples: t.gatedSamples ?? null,
+      gatedImpliedMs: t.gatedImpliedMs ?? null,
+    };
+  }
   const tm = t.timing;
   return {
     id: t.id,
@@ -72,9 +83,10 @@ function exportTurn(t: Turn) {
     original: t.original ?? null,
     translation: t.translation ?? null,
     errorLabel: t.errorLabel ?? null,
-    durationSec: Number(t.durationSec.toFixed(3)),
-    payloadBytes: tm?.payloadBytes ?? t.blob.size,
-    impliedHz: t.durationSec ? Math.round((t.blob.size - 44) / 2 / t.durationSec) : null,
+    durationSec: t.durationSec !== undefined ? Number(t.durationSec.toFixed(3)) : null,
+    payloadBytes: tm?.payloadBytes ?? t.blob?.size ?? null,
+    impliedHz:
+      t.durationSec && t.blob ? Math.round((t.blob.size - 44) / 2 / t.durationSec) : null,
     firstTurn: tm?.firstTurn ?? null,
     sinceLastReleaseSec: tm?.sinceLastReleaseSec ?? null,
     client: tm
@@ -112,6 +124,26 @@ export default function Home() {
 
   function updateTurn(id: string, patch: Partial<Turn>) {
     setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  }
+
+  // On a gate trip: the release never became a turn (below MIN_TURN_MS in
+  // lib/recorder.ts, an accidental press). No audio, no error state, no
+  // toast — just a debug-list entry, distinguishable by status "gated", so
+  // real-use trip frequency can be counted. prevReleaseRef is deliberately
+  // left untouched: a trip isn't a real turn and shouldn't reset the
+  // idle-gap baseline used for latency debug.
+  function handleGated(side: Side, gated: GatedTurn) {
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: makeId(),
+        side,
+        timestamp: Date.now(),
+        status: "gated",
+        gatedSamples: gated.samples,
+        gatedImpliedMs: gated.impliedMs,
+      },
+    ]);
   }
 
   // On release: register the turn (status "loading", raw WAV retained per locked
@@ -234,7 +266,7 @@ export default function Home() {
   // the PCM byte count and the independently measured wall-clock duration. A
   // correct 16 kHz encoder reads ~16000; a worklet silently at 48k would read ~48000.
   function impliedRate(t: Turn): number | null {
-    if (!t.durationSec) return null;
+    if (!t.durationSec || !t.blob) return null;
     return Math.round((t.blob.size - 44) / 2 / t.durationSec);
   }
 
@@ -281,6 +313,7 @@ export default function Home() {
         side={side}
         engine={engine}
         onCapture={(rec, releasedAt) => handleCapture(side, rec, releasedAt)}
+        onGated={(gated) => handleGated(side, gated)}
         onError={setMicError}
         onStart={() => setMicError(null)}
       />
@@ -294,27 +327,39 @@ export default function Home() {
             const text =
               t.status === "loading"
                 ? "…"
-                : t.status === "error"
-                  ? `⚠ ${t.errorLabel ?? "error"}`
-                  : (isSpeaker ? t.original : t.translation) || "—";
+                : t.status === "gated"
+                  ? "⊘ skipped (too short)"
+                  : t.status === "error"
+                    ? `⚠ ${t.errorLabel ?? "error"}`
+                    : (isSpeaker ? t.original : t.translation) || "—";
             return (
               <div
                 key={t.id}
-                className={`turn-row${t.status === "error" ? " turn-error" : ""}`}
+                className={`turn-row${t.status === "error" ? " turn-error" : ""}${t.status === "gated" ? " turn-gated" : ""}`}
               >
                 <div className="turn-text">{text}</div>
                 {isSpeaker && (
                   <div className="turn-debug">
-                    {formatBytes(t.blob.size)} · {t.durationSec.toFixed(2)}s ·{" "}
-                    {rate === null ? "—" : `~${rate} Hz`}
-                    {t.requestMs != null ? ` · ${t.requestMs} ms` : ""} ·{" "}
-                    {formatTime(t.timestamp)}
-                    {t.timing &&
-                      timingLines(t.timing).map((line, i) => (
-                        <div key={i} className="turn-timing">
-                          {line}
-                        </div>
-                      ))}
+                    {t.status === "gated" ? (
+                      <>
+                        gated · {t.gatedSamples} samples · ~{t.gatedImpliedMs} ms ·{" "}
+                        {formatTime(t.timestamp)}
+                      </>
+                    ) : (
+                      <>
+                        {t.blob ? formatBytes(t.blob.size) : "—"} ·{" "}
+                        {t.durationSec !== undefined ? t.durationSec.toFixed(2) : "—"}s ·{" "}
+                        {rate === null ? "—" : `~${rate} Hz`}
+                        {t.requestMs != null ? ` · ${t.requestMs} ms` : ""} ·{" "}
+                        {formatTime(t.timestamp)}
+                        {t.timing &&
+                          timingLines(t.timing).map((line, i) => (
+                            <div key={i} className="turn-timing">
+                              {line}
+                            </div>
+                          ))}
+                      </>
+                    )}
                   </div>
                 )}
               </div>

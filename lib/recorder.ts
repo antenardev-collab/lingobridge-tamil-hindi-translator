@@ -25,6 +25,17 @@ import { floatToInt16, encodeWav } from "./wav";
 const SAMPLE_RATE = 16000;
 const WORKLET_URL = "/worklets/pcm-recorder.js";
 
+/**
+ * Minimum captured duration for a turn to be sent. Below this, a release is
+ * treated as an accidental press, not speech, and the audio is discarded
+ * before encoding — never sent to /api/translate. 300ms sits far above an
+ * accidental press (the 92ms incident that motivated this gate) and far below
+ * any real word, including short affirmatives like ஆமா / சரி / हाँ.
+ * Deliberately conservative: it must only ever catch accidents, never speech.
+ */
+const MIN_TURN_MS = 300;
+const MIN_TURN_SAMPLES = Math.round((MIN_TURN_MS / 1000) * SAMPLE_RATE);
+
 /** Distinguishes permission denial from a generic capture failure. */
 export class RecorderError extends Error {
   kind: MicErrorKind;
@@ -43,6 +54,19 @@ export interface Recording {
   mimeType: string;
   /** Wall-clock capture duration (independent of sample count) for the implied-rate readout. */
   durationSec: number;
+}
+
+/**
+ * Returned by stopRecording instead of a Recording when the captured sample
+ * count fell below MIN_TURN_SAMPLES. Carries the evidence (sample count) the
+ * gate acted on, not wall-clock press duration, since the two can diverge.
+ */
+export interface GatedTurn {
+  gated: true;
+  /** Captured sample count at SAMPLE_RATE. */
+  samples: number;
+  /** Sample count converted to ms, for a human-readable debug readout. */
+  impliedMs: number;
 }
 
 export class CaptureEngine {
@@ -206,7 +230,7 @@ export class CaptureEngine {
    * if `token` doesn't own the active recording (a non-owning side, or a stale
    * release) or no turn is in progress (released during warm-up).
    */
-  async stopRecording(token: number): Promise<Recording | null> {
+  async stopRecording(token: number): Promise<Recording | GatedTurn | null> {
     if (!this.recording || token !== this.activeToken) return null;
     const durationSec = this.startedAt ? (performance.now() - this.startedAt) / 1000 : 0;
     this.recording = false;
@@ -218,6 +242,17 @@ export class CaptureEngine {
 
     let total = 0;
     for (const c of chunks) total += c.length;
+
+    // Gate before encoding: an accidental press never reaches floatToInt16/
+    // encodeWav, let alone the network.
+    if (total < MIN_TURN_SAMPLES) {
+      return {
+        gated: true,
+        samples: total,
+        impliedMs: Math.round((total / SAMPLE_RATE) * 1000),
+      };
+    }
+
     const samples = new Float32Array(total);
     let offset = 0;
     for (const c of chunks) {
