@@ -1,3 +1,5 @@
+import type { AmplitudeReading } from "./recorder";
+
 /** Which half of the split screen a turn came from — also the source language. */
 export type Side = "ta" | "hi";
 
@@ -120,6 +122,8 @@ export interface CapturedTurn {
   errorLabel?: string;
   /** Slice 4a latency decomposition (client marks + server debug). */
   timing?: TurnTiming;
+  /** TEMPORARY — 4b.2 energy-gate measurement (see lib/recorder.ts). Not used for gating. */
+  amplitude: AmplitudeReading;
 }
 
 /**

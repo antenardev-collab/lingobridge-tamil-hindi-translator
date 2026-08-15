@@ -86,6 +86,13 @@ function exportTurn(t: Turn) {
     durationSec: Number(t.durationSec.toFixed(3)),
     payloadBytes: tm?.payloadBytes ?? t.blob.size,
     impliedHz: t.durationSec ? Math.round((t.blob.size - 44) / 2 / t.durationSec) : null,
+    // TEMPORARY — 4b.2 energy-gate measurement, not used for gating.
+    amplitude: {
+      rmsLinear: Number(t.amplitude.rmsLinear.toFixed(6)),
+      rmsDbfs: Number(t.amplitude.rmsDbfs.toFixed(1)),
+      peakLinear: Number(t.amplitude.peakLinear.toFixed(6)),
+      peakDbfs: Number(t.amplitude.peakDbfs.toFixed(1)),
+    },
     firstTurn: tm?.firstTurn ?? null,
     sinceLastReleaseSec: tm?.sinceLastReleaseSec ?? null,
     client: tm
@@ -178,6 +185,7 @@ export default function Home() {
         blob: rec.blob,
         mimeType: rec.mimeType,
         durationSec: rec.durationSec,
+        amplitude: rec.amplitude,
         timestamp: Date.now(),
         status: "loading",
       },
@@ -358,7 +366,9 @@ export default function Home() {
                         {formatBytes(t.blob.size)} · {t.durationSec.toFixed(2)}s ·{" "}
                         {rate === null ? "—" : `~${rate} Hz`}
                         {t.requestMs != null ? ` · ${t.requestMs} ms` : ""} ·{" "}
-                        {formatTime(t.timestamp)}
+                        {formatTime(t.timestamp)} · rms{" "}
+                        {t.amplitude.rmsDbfs.toFixed(1)} dBFS · peak{" "}
+                        {t.amplitude.peakDbfs.toFixed(1)} dBFS
                         {t.timing &&
                           timingLines(t.timing).map((line, i) => (
                             <div key={i} className="turn-timing">

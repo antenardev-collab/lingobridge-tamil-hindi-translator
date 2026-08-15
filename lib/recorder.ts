@@ -36,6 +36,53 @@ const WORKLET_URL = "/worklets/pcm-recorder.js";
 const MIN_TURN_MS = 300;
 const MIN_TURN_SAMPLES = Math.round((MIN_TURN_MS / 1000) * SAMPLE_RATE);
 
+/**
+ * TEMPORARY measurement instrumentation for the 4b.2 energy-gate decision
+ * (PLAN.md): the duration gate above catches accidental taps but not a
+ * genuine press capturing room noise/silence, which the model still
+ * fabricates a plausible sentence from. This computes RMS + peak amplitude
+ * from the captured samples so real on-device numbers can inform whether an
+ * energy threshold exists at all, before any gate is built on top of it.
+ * Measurement only — nothing here blocks or alters what gets sent. Remove or
+ * promote into an actual gate once a threshold decision is made; do not let
+ * this linger past that decision.
+ */
+const SILENCE_FLOOR_DBFS = -100;
+
+/** 20*log10(value), clamped to SILENCE_FLOOR_DBFS so true silence (0) and any
+ * non-positive input never produce -Infinity or NaN. */
+function toDbfs(value: number): number {
+  if (value <= 0) return SILENCE_FLOOR_DBFS;
+  const db = 20 * Math.log10(value);
+  return db < SILENCE_FLOOR_DBFS ? SILENCE_FLOOR_DBFS : db;
+}
+
+export interface AmplitudeReading {
+  rmsLinear: number;
+  rmsDbfs: number;
+  peakLinear: number;
+  peakDbfs: number;
+}
+
+/** RMS and peak absolute amplitude over the full capture, linear [0,1] + dBFS. */
+function measureAmplitude(samples: Float32Array): AmplitudeReading {
+  let sumSquares = 0;
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    sumSquares += s * s;
+    const abs = Math.abs(s);
+    if (abs > peak) peak = abs;
+  }
+  const rms = samples.length ? Math.sqrt(sumSquares / samples.length) : 0;
+  return {
+    rmsLinear: rms,
+    rmsDbfs: toDbfs(rms),
+    peakLinear: peak,
+    peakDbfs: toDbfs(peak),
+  };
+}
+
 /** Distinguishes permission denial from a generic capture failure. */
 export class RecorderError extends Error {
   kind: MicErrorKind;
@@ -54,6 +101,8 @@ export interface Recording {
   mimeType: string;
   /** Wall-clock capture duration (independent of sample count) for the implied-rate readout. */
   durationSec: number;
+  /** TEMPORARY — see the measureAmplitude comment above. 4b.2 energy-gate measurement only. */
+  amplitude: AmplitudeReading;
 }
 
 /**
@@ -260,12 +309,18 @@ export class CaptureEngine {
       offset += c.length;
     }
 
+    // Measured from the Float32 samples themselves — before encoding, not
+    // read back from the WAV bytes. Temporary (see the comment above);
+    // computing it here doesn't change what happens next below.
+    const amplitude = measureAmplitude(samples);
+
     const pcm = floatToInt16(samples);
     const wav = encodeWav(pcm, SAMPLE_RATE);
     return {
       blob: new Blob([wav], { type: "audio/wav" }),
       mimeType: "audio/wav",
       durationSec,
+      amplitude,
     };
   }
 
