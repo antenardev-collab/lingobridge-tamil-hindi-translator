@@ -27,12 +27,31 @@ export interface TranslateInput {
   model?: string;
 }
 
+/**
+ * Slice 4a: server-clock marks around the provider call, so the route can
+ * decompose function time. All are Node `performance.now()` ms (one process, one
+ * clock). `firstByte` is null unless the call actually streams — a non-streaming
+ * `generateContent` has no honest token TTFT, so we do not invent one.
+ */
+export interface PipelineTiming {
+  /** Just before the provider fetch. */
+  requestSent: number;
+  /** Provider response headers, when streaming; else null. */
+  firstByte: number | null;
+  /** Provider body fully read. */
+  complete: number;
+  /** Does OUR code stream this provider call? (Names our impl, not model capability.) */
+  weStream: boolean;
+}
+
 export interface TranslateOutput extends TranslateResult {
   usage: TranslateUsage;
   /** The model actually used (after default resolution). */
   model: string;
   /** Raw model text, kept for debugging — never returned by the API route. */
   raw: string;
+  /** Server-clock timing marks around the provider call (Slice 4a). */
+  timing: PipelineTiming;
 }
 
 export interface TranslatePipeline {
