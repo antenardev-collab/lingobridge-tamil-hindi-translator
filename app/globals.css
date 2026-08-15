@@ -107,6 +107,39 @@ body {
   opacity: 0.55;
 }
 
+/* Slice 4a latency decomposition — one line per clock, tabular for scanning. */
+.turn-timing {
+  margin-top: 1px;
+  font-size: 10px;
+  line-height: 1.35;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Copy-timings affordance: fixed top-right, small and dim, out of the way of the
+ * two hold-to-talk buttons. Debug aid only (decision 6).
+ */
+.debug-copy {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #f5f5f5;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.debug-copy:active {
+  opacity: 0.9;
+}
+
 .turn-row.turn-error {
   background: rgba(224, 54, 76, 0.18);
 }

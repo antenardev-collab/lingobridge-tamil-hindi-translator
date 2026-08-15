@@ -9,7 +9,8 @@ interface HoldToTalkProps {
   side: Side;
   /** Shared warm capture engine (one mic/context for both halves). */
   engine: CaptureEngine;
-  onCapture: (rec: Recording) => void;
+  /** `releasedAt` is the pointerup mark (client clock) — the Slice 4a `release`. */
+  onCapture: (rec: Recording, releasedAt: number) => void;
   onError: (kind: MicErrorKind) => void;
   /** Called when a recording starts so the parent can clear a stale error. */
   onStart?: () => void;
@@ -70,6 +71,9 @@ export default function HoldToTalk({ side, engine, onCapture, onError, onStart }
     if (!activeRef.current) return;
     activeRef.current = false;
     setRecording(false);
+    // Slice 4a `release` mark: pointerup, taken before the (synchronous) WAV
+    // encode inside stopRecording, so release→encoded isolates encode cost.
+    const releasedAt = performance.now();
     const token = tokenRef.current;
     tokenRef.current = null;
     // No token means this press never owned a turn (engine was busy, or released
@@ -77,7 +81,7 @@ export default function HoldToTalk({ side, engine, onCapture, onError, onStart }
     if (token === null) return;
     try {
       const rec = await engine.stopRecording(token);
-      if (rec) onCapture(rec);
+      if (rec) onCapture(rec, releasedAt);
     } catch (err) {
       if (err instanceof RecorderError) onError(err.kind);
       else onError("unavailable");
