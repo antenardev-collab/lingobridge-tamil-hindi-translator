@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import HoldToTalk from "@/components/HoldToTalk";
 import { CaptureEngine, type GatedTurn, type Recording } from "@/lib/recorder";
 import { strings, micErrorMessages, forSide, type MicErrorKind } from "@/lib/i18n";
-import type { ServerDebug, Side, Turn, TurnTiming } from "@/lib/types";
+import type { CapturedTurn, ServerDebug, Side, Turn, TurnTiming } from "@/lib/types";
 
 function makeId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -71,8 +71,8 @@ function exportTurn(t: Turn) {
       id: t.id,
       side: t.side,
       status: t.status,
-      gatedSamples: t.gatedSamples ?? null,
-      gatedImpliedMs: t.gatedImpliedMs ?? null,
+      gatedSamples: t.gatedSamples,
+      gatedImpliedMs: t.gatedImpliedMs,
     };
   }
   const tm = t.timing;
@@ -83,10 +83,9 @@ function exportTurn(t: Turn) {
     original: t.original ?? null,
     translation: t.translation ?? null,
     errorLabel: t.errorLabel ?? null,
-    durationSec: t.durationSec !== undefined ? Number(t.durationSec.toFixed(3)) : null,
-    payloadBytes: tm?.payloadBytes ?? t.blob?.size ?? null,
-    impliedHz:
-      t.durationSec && t.blob ? Math.round((t.blob.size - 44) / 2 / t.durationSec) : null,
+    durationSec: Number(t.durationSec.toFixed(3)),
+    payloadBytes: tm?.payloadBytes ?? t.blob.size,
+    impliedHz: t.durationSec ? Math.round((t.blob.size - 44) / 2 / t.durationSec) : null,
     firstTurn: tm?.firstTurn ?? null,
     sinceLastReleaseSec: tm?.sinceLastReleaseSec ?? null,
     client: tm
@@ -122,8 +121,17 @@ export default function Home() {
   // the stable ref, not `engine`, so the effect runs once.
   useEffect(() => () => void engineRef.current?.dispose(), []);
 
-  function updateTurn(id: string, patch: Partial<Turn>) {
-    setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  // Patches only ever apply to a CapturedTurn (a "loading" turn resolving to
+  // "done"/"error") — a gate trip is terminal from the moment it's pushed and
+  // never goes through updateTurn. Typed on CapturedTurn, not Turn, so patch
+  // can't accidentally carry gated-only fields; the `t.status !== "gated"`
+  // guard is what lets TS narrow `t` to CapturedTurn for the spread (ids never
+  // actually collide across the two variants, so this doesn't change which
+  // turn gets updated — it's a type-narrowing guard, not new behaviour).
+  function updateTurn(id: string, patch: Partial<CapturedTurn>) {
+    setTurns((prev) =>
+      prev.map((t) => (t.id === id && t.status !== "gated" ? { ...t, ...patch } : t)),
+    );
   }
 
   // On a gate trip: the release never became a turn (below MIN_TURN_MS in
@@ -266,7 +274,7 @@ export default function Home() {
   // the PCM byte count and the independently measured wall-clock duration. A
   // correct 16 kHz encoder reads ~16000; a worklet silently at 48k would read ~48000.
   function impliedRate(t: Turn): number | null {
-    if (!t.durationSec || !t.blob) return null;
+    if (t.status === "gated" || !t.durationSec) return null;
     return Math.round((t.blob.size - 44) / 2 / t.durationSec);
   }
 
@@ -347,8 +355,7 @@ export default function Home() {
                       </>
                     ) : (
                       <>
-                        {t.blob ? formatBytes(t.blob.size) : "—"} ·{" "}
-                        {t.durationSec !== undefined ? t.durationSec.toFixed(2) : "—"}s ·{" "}
+                        {formatBytes(t.blob.size)} · {t.durationSec.toFixed(2)}s ·{" "}
                         {rate === null ? "—" : `~${rate} Hz`}
                         {t.requestMs != null ? ` · ${t.requestMs} ms` : ""} ·{" "}
                         {formatTime(t.timestamp)}

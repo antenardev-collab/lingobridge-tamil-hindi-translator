@@ -2,13 +2,6 @@
 export type Side = "ta" | "hi";
 
 /**
- * Where a turn's translate request currently is. "gated" is not a request
- * state at all — it means the release never became a turn (below
- * MIN_TURN_MS in lib/recorder.ts) and nothing was sent.
- */
-export type TurnStatus = "loading" | "done" | "error" | "gated";
-
-/**
  * Slice 4a latency decomposition, returned by /api/translate under `debug`.
  *
  * CLOCK DISCIPLINE (critical): every field here is a duration in ms between two
@@ -98,9 +91,13 @@ export interface TurnTiming {
 
 /**
  * One captured utterance + its translate result, held in React session memory
- * only (locked decision 4). `blob` is the raw WAV, retained per turn. `mimeType`
- * is always "audio/wav"; `durationSec` is wall-clock capture time for the
- * debug-only implied-rate readout (locked decision 6).
+ * only (locked decision 4 — raw audio retained per turn). `blob` is the raw
+ * WAV; `mimeType` is always "audio/wav"; `durationSec` is wall-clock capture
+ * time for the debug-only implied-rate readout (locked decision 6). All three
+ * are REQUIRED, not optional: a CapturedTurn only ever exists because audio
+ * was actually captured and encoded (lib/recorder.ts's MIN_TURN_MS gate
+ * returns a SkippedTurn instead, below, when that didn't happen) — decision 4
+ * as a compiler-enforced invariant, not just a comment.
  *
  * The request fields fill in as each turn's `/api/translate` call resolves,
  * independently per turn — requests run in parallel, so a later turn can finish
@@ -109,23 +106,38 @@ export interface TurnTiming {
  * debug marker distinguishing a 400 (capture) from a 502 (model) from a network
  * failure.
  */
-export interface Turn {
+export interface CapturedTurn {
   id: string;
   side: Side;
-  /** Absent when status is "gated" — a gate trip never encodes audio. */
-  blob?: Blob;
-  mimeType?: string;
-  durationSec?: number;
+  status: "loading" | "done" | "error";
+  blob: Blob;
+  mimeType: string;
+  durationSec: number;
   timestamp: number;
-  status: TurnStatus;
   original?: string;
   translation?: string;
   requestMs?: number;
   errorLabel?: string;
   /** Slice 4a latency decomposition (client marks + server debug). */
   timing?: TurnTiming;
-  /** Set only when status is "gated": the sample count the gate acted on. */
-  gatedSamples?: number;
-  /** Set only when status is "gated": that sample count converted to ms. */
-  gatedImpliedMs?: number;
 }
+
+/**
+ * A release that never became a turn — the captured sample count fell below
+ * MIN_TURN_MS (lib/recorder.ts), so nothing was encoded and nothing was sent.
+ * No audio fields exist on this variant at all: there is no blob to retain,
+ * so decision 4 (raw-audio retention) doesn't apply and can't be reached for.
+ * `gatedSamples`/`gatedImpliedMs` are the evidence the gate acted on, kept for
+ * the debug row and the copy-timings export so trip frequency can be counted.
+ */
+export interface SkippedTurn {
+  id: string;
+  side: Side;
+  status: "gated";
+  timestamp: number;
+  gatedSamples: number;
+  gatedImpliedMs: number;
+}
+
+/** A turn-list entry: either a real captured/sent turn, or a gate trip. */
+export type Turn = CapturedTurn | SkippedTurn;
