@@ -331,6 +331,32 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     `debug` now reports both: `execRegion` (from `VERCEL_REGION`, load-bearing)
     and `edgeTrace` (the raw `x-vercel-id` header, kept verbatim, reference only
     — never treat it as the execution region again).
+  - **Region experiment CLOSED WITHOUT A FLIP — production stays IAD1
+    (2026-08-14).** Once `execRegion` was trustworthy, two production cold-start
+    samples of the real Vercel→Gemini leg (`requestToCompleteMs`) read **757ms
+    and 1218ms** from IAD1 — well under the 1.6–2.3s median measured calling
+    Gemini *directly* from Chennai (the thinking-level probe's 25 desktop runs,
+    above). A BOM1 flip would shorten the client→function leg but there's no
+    evidence it shortens — and real evidence it could lengthen — the
+    function→Gemini leg, since Gemini's own infrastructure siting is unrelated
+    to Vercel's region choice; IAD1 already beats direct-from-Chennai on the leg
+    that would move. **The 12-request BOM1 baseline was not run.** Don't reopen
+    this without new evidence that Gemini responds faster to calls originating
+    near Mumbai specifically.
+  - **Payload-buffering check — VERIFIED FLAT (2026-08-14).** 4a's transport
+    derivation, `(client encoded→complete) − serverTotalMs`, is only valid if
+    Vercel buffers the request body before invoking the function; if it invokes
+    while the body streams in, upload time lands inside `serverTotalMs` and gets
+    misattributed to the model leg on every turn. Tested directly against
+    production: 3 payload sizes × 3 sequential POSTs (9/9 HTTP 200, real
+    `debug` on every run) — `ta-11.wav` (60,152 B), `ta-08.wav` (173,476 B), and
+    a synthetic 730,498 B WAV (concatenated ground-truth PCM under a canonical
+    header; content irrelevant, only byte count varied) — a **12.1× size range**.
+    `entryToRequestMs` **min/median/max: 1/3/6 → 1/2/2 → 5/6/9** — single-digit
+    ms at every size, no scaling proportional to the 12× payload growth (a true
+    streamed-invoke would show tens–hundreds of ms at 730KB, not single digits).
+    **Verdict: FLAT. The transport subtraction is sound.** No fix needed; 4a's
+    numbers can be trusted going into on-device data collection.
 - **4b — harden the transliterator**, promote it into `lib/` as a pure,
   unit-testable, no-network module — *before* the TTS route, so 4c is built around
   it. (Already exercised on ~6 clips; threw one 400 on an intra-word hyphen.)
