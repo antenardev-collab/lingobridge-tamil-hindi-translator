@@ -244,6 +244,89 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
 > hard-mute the mic stream; unmute 250ms after the `ended` event.** Add a replay
 > button. If TTS fails, the text stays on screen — never block on audio.
 
+> **Superseded — TTS provider.** The blockquote above (OpenRouter
+> `/api/v1/audio/speech`) predates the Slice 2 TTS findings. CLAUDE.md → Stack now
+> locks **Gemini native TTS** (`generateContent`, `responseModalities:["AUDIO"]`)
+> for both languages. Build 4c against CLAUDE.md, not this blockquote.
+
+### Slice 4 sub-slices
+
+- **4a — instrumentation & decomposition (SCOPE ADDITION, not "voice output").**
+  This is *not* TTS. It was added because the sub-2s release-to-speak target
+  (decision 3) can't be decided against the ~3.3s **complete-time** measured in
+  Slice 3 — that figure is transport + model waiting, undecomposed, and the two
+  halves have completely different fixes. 4a instruments release→encoded→
+  firstByte→complete on the client and entry→geminiRequestSent→geminiComplete→exit
+  on the server (returned additively under a `debug` key), derives transport as a
+  same-clock subtraction `(client encoded→complete) − (server entry→exit)` (never
+  a cross-clock diff — the clocks aren't synchronised), and surfaces per-turn plus
+  a copy-as-JSON export. **Gate: the latency target is decided here, with numbers.**
+  - **Streaming answer, corrected after a live probe (2026-08-14).** An initial
+    WebFetch-summarized read of Google's API reference claimed audio-input
+    streaming was documented; that summary was wrong (it flattened separate
+    per-method example tabs) and the user caught it against the docs directly.
+    A real 3-run `streamGenerateContent?alt=sse` probe (scratchpad, `ta-08.wav`,
+    production prompt + `responseMimeType`) found it **does** call successfully
+    and **does** return genuinely incremental SSE chunks (5 distinct frames/run,
+    each a different text slice, output byte-identical to the non-streaming
+    baseline) — but **firstChunk lands within ~2ms of complete in every run**
+    (1620/3385/3686ms vs 1622/3387/3688ms). Confirmed not a JSON-mode artifact
+    (same burst with `responseMimeType` removed entirely). **No usable TTFT here.**
+    Decision: **not** switching `/api/translate` to consume SSE. 4a ships with
+    `requestToFirstByteMs: null`, `weStream: false`.
+    - **Risk marker (independent of the latency finding):** `GET
+      /v1beta/models/gemini-3.1-flash-lite` lists `supportedGenerationMethods` as
+      `["generateContent", "countTokens", "createCachedContent",
+      "batchGenerateContent"]` — **`streamGenerateContent` is not on that list**,
+      despite working. It's an unlisted/undocumented capability path for this
+      model, not a first-class supported method per the model's own metadata.
+      Another reason not to build production behavior on it.
+    - `modelStatus.modelStage` / `retirementTime`: absent from every surface
+      checked (`generateContent`, `streamGenerateContent` SSE frames, and
+      `models.get`). The preview-dependency question from the Slice 2 findings
+      (CLAUDE.md → Stack) remains open — not answered by data, not answerable
+      from this API.
+  - **Thinking-level hypothesis — tested and DEAD (2026-08-14).** The streaming
+    probe's ~2× spread on identical input raised "is Flash-Lite's default
+    'thinking' eating the wall-clock time before any output token?" as a
+    candidate cause. Google's docs (`generate-content/gemini-3`, Thinking Level
+    table, reproduced verbatim) give `gemini-3.1-flash-lite` a **default
+    `thinkingLevel` of `minimal`** (not dynamic); all four levels — `minimal`,
+    `low`, `medium`, `high` — are accepted. Tested directly: production
+    non-streaming `generateContent` shape, `ta-08.wav`, 5 configs (current/no
+    `thinkingConfig`, then each level lowest→highest) × 5 runs = 25 calls.
+    **`usageMetadata.thoughtsTokenCount` is absent from the response schema at
+    every level, including `high`** (confirmed via a raw dump, not just a `??0`
+    default) — the model reports zero thinking tokens regardless of configured
+    depth for this call shape. Latency showed no monotonic trend against level
+    (medians 1569–2274ms, overlapping; `high` was fastest median, backwards from
+    what a thinking-cost theory predicts). `original`/`translation` were
+    character-identical across all 25 runs. **Not a latency lever. Do not
+    revisit without new evidence** — this was the direct measurement the
+    hypothesis asked for, not an inference from noisy timing.
+  - **Reference point: direct desktop→Gemini vs. on-device→IAD1→Gemini.** The
+    thinking-level probe's 25 direct-from-Chennai desktop calls (bypassing our
+    Vercel function and mobile transport entirely) had `requestToCompleteMs`
+    median **~1.6–2.3s**. Slice 3's on-device mobile measurement (via IAD1) had
+    complete-time median **~3.3s**. The gap between those two medians is the
+    transport/platform envelope (mobile network + IAD1 hop + function overhead)
+    that the region probe (below) and the on-device 4a session are meant to
+    separate out — desktop-direct is a lower bound, not what a user experiences.
+  - **Tail latency is real and unexplained.** 1 run in 25 (thinking-level probe,
+    `medium` config) hit 10,150ms; the other 24 in the same batch were
+    1.3–3.5s. Not config-specific — inconsistent with any of the levers tested
+    so far. **The eventual latency target needs a p90/p99 and a timeout/retry
+    policy, not just a median** — a single mean or median hides this.
+- **4b — harden the transliterator**, promote it into `lib/` as a pure,
+  unit-testable, no-network module — *before* the TTS route, so 4c is built around
+  it. (Already exercised on ~6 clips; threw one 400 on an intra-word hyphen.)
+- **4c — TTS route** (`/api/speak`): Gemini native TTS, streaming, playback on the
+  first chunk, per-side fixed voice, mic hard-gate on `play()` + unmute on `ended`
+  + 250ms (decision 2). Do **not** pipeline translate→TTS this slice (measured TTFA
+  ~1.3s, flat across input length; chunking risks prosody breaks and mid-numeral
+  flushes).
+- **4d — on-device release-to-first-audio test**, end to end.
+
 **Done when:** audio plays and mic mute/unmute is verifiable in the console.
 Benchmark Tamil and Hindi voice quality across available TTS models — Tamil is
 usually the weaker one.
