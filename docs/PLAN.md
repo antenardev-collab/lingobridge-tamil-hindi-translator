@@ -111,6 +111,65 @@ score is not a prediction of live on-device behaviour: any future
 live-vs-eval discrepancy should consider capture-side signal processing as a
 candidate cause before suspecting the model.
 
+### Prompt edit: venue-assumption removal, eval reproducibility, and a rejected no-speech rule (2026-08-15/16)
+
+**The eval harness is a deterministic instrument.** A control run — `lib/prompt.ts`
+reverted to the committed baseline, same 26 clips, same dev server — reproduced
+the stored 07-26 baseline **26/26 byte-identical**: every clip, both `original`
+and `translation`, and every summary statistic. At `temperature: 0`, a single
+26-clip run against a stored baseline is a real measurement, not a sample.
+**Caveat:** this holds for this model version on this serving stack; Google can
+change serving behind a stable model name, so a future diff against an old
+baseline may be a serving change, not ours.
+
+**Prompt perturbation is not semantic effect.** Removing the venue phrase alone
+changed 14 of 26 clips; that deletion plus the no-speech rule together changed
+only 9 — adding a rule *restored* five clips to the baseline. Greedy decoding
+means any change to the prompt token sequence shifts the output path
+corpus-wide, so diff size tracks perturbation, not meaning. **Consequence: the
+harness is a regression detector at a fixed prompt, not a quality instrument
+for prompt iteration.** Iterating on the prompt against this harness is a loop
+— each fix reshuffles roughly half the corpus, while `mustPreserve` reads 7/7
+throughout, because it counts digits and proper nouns and cannot see loanword
+substitution or register drift. **Do not tune the prompt against eval diffs.**
+
+**What the venue-phrase removal actually caused.** Five clips landed
+character-identical under two *independent* perturbations (the deletion alone,
+and the deletion plus the no-speech rule): `ta-01`, `ta-09`, `hi-01`, `hi-09`,
+`hi-12` — convergence, not reshuffling, so genuinely caused by the venue
+phrase, not perturbation noise. Notably: `hi-12` improved from a fully
+romanised `5 hours aagum ma'am.` to clean Tamil script (romanised count 5→4
+both times the phrase was removed); `hi-09` substituted `வேலை` for `work` —
+the exact case the prompt itself names as forbidden (`"never வேலை for
+'work'"`), a locked-decision-5 register drift that nonetheless still passes
+the comprehension bar. `mustPreserve` 7/7, 0 errors, both runs. Clips landing
+on a third variant that matched neither the baseline nor the combined-edit
+text (`ta-05`, `ta-07`, `ta-13`, `hi-04`) are perturbation, not identifiable
+effect.
+
+**The no-speech rule — tested and rejected, not shipped.** Wording tried: *"if
+the audio contains no speech at all, output empty strings for both fields
+instead of guessing plausible content."* It passed the negative test: it did
+not fire falsely on any of 26 real-speech clips, including the single-word
+ones. But it never fired at all on the case it was written for: four
+consecutive live no-speech turns (1.24s / 1.18s / 1.08s, one more in the same
+run) all returned HTTP 200 with the character-identical fabricated sentence
+`இந்த ஆர்டர் எப்ப வரும்?`. Models will not reliably self-report hearing
+nothing. **Do not re-propose a prompt-level fix for fabrication.**
+
+**Fabrication is prompt-independent.** Before the venue phrase was removed,
+the model's invented sentence on no-speech audio was `இந்த டிசைன்ல வேற கலர்
+இருக்கா?`; after, it was `இந்த ஆர்டர் எப்ப வரும்?`. Both are built from the
+prompt's own loanword vocabulary. Removing the domain framing changed *what*
+it invents, not *whether* it invents. **The only viable defence is not
+sending non-speech audio to the model at all** — a client-side energy gate,
+extending 4b.2 (above) from duration-only to content-aware.
+
+**Outstanding debt — see Open items below:** the venue-phrase removal (now
+committed) invalidates the Slice 2 native-speaker validation that locked
+`gemini-direct`. A revalidation pass is owed before this prompt is trusted on
+a real shop floor, at 4d at the latest.
+
 ---
 
 ## Slice 3 — Live capture to the endpoint ✅ COMPLETE (2026-08-11)
@@ -335,6 +394,13 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     this is effectively all time inside the Gemini call, not client/network
     overhead. Reinforces the need for a timeout/retry policy (already flagged
     above); **not acted on this session** — recorded so it isn't lost.
+  - **Fourth and fifth tail samples — clustering, not scattering (2026-08-16).**
+    A 10,203ms turn on localhost, transport 73ms (effectively all inside the
+    Gemini call, same pattern as above), and a 9,079ms turn in the same
+    session. On record now: 10,150ms / 27,277ms / 53,093ms / 10,203ms /
+    9,079ms — five outliers across unrelated sessions, not one fluke.
+    **4c needs a timeout-and-abandon policy as a design input, not an
+    afterthought.**
   - **`x-vercel-id` is NOT the execution region — cost us a wrong conclusion
     once, recording so it doesn't happen again.** A production sanity POST from
     Chennai read `vercelId: "bom1::…"` off the request header and was briefly
@@ -639,6 +705,13 @@ ground-truth.json exists to test cross-voice routing here.
 
 ## Open items
 
+- **The venue-phrase removal from `lib/prompt.ts` (committed 2026-08-16)
+  invalidates the Slice 2 native-speaker validation that locked
+  `gemini-direct`.** That lock was validated against the prompt *including*
+  "on a shop floor"; that prompt no longer exists. Revalidate against the
+  current prompt before trusting it on a real shop floor — at 4d at the
+  latest, sooner if 4c ships audio output on this prompt. See the Slice 2
+  subsection above for the full before/after.
 - **`expectedTranslation` fields need native-speaker verification.** They were
   drafted by an LLM. Until a Tamil and a Hindi speaker sign off, treat eval
   register judgements as provisional.
