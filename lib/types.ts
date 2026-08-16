@@ -122,17 +122,23 @@ export interface CapturedTurn {
   errorLabel?: string;
   /** Slice 4a latency decomposition (client marks + server debug). */
   timing?: TurnTiming;
-  /** TEMPORARY — 4b.2 energy-gate measurement (see lib/recorder.ts). Not used for gating. */
+  /** TEMPORARY — 4b.2 amplitude readout (see lib/recorder.ts). Descriptive only
+   * on a CapturedTurn: this turn already cleared both gates, so the value here
+   * doesn't drive any decision — it's the same measurement the energy gate
+   * used, kept for visibility on turns that passed. */
   amplitude: AmplitudeReading;
 }
 
 /**
- * A release that never became a turn — the captured sample count fell below
- * MIN_TURN_MS (lib/recorder.ts), so nothing was encoded and nothing was sent.
- * No audio fields exist on this variant at all: there is no blob to retain,
- * so decision 4 (raw-audio retention) doesn't apply and can't be reached for.
- * `gatedSamples`/`gatedImpliedMs` are the evidence the gate acted on, kept for
- * the debug row and the copy-timings export so trip frequency can be counted.
+ * A release that never became a turn — it tripped one of the two 4b.2
+ * insufficiency checks in `CaptureEngine.stopRecording()` (duration or
+ * energy), so nothing was encoded and nothing was sent. No audio fields
+ * exist on this variant at all: there is no blob to retain, so decision 4
+ * (raw-audio retention) doesn't apply and can't be reached for.
+ * `gatedSamples`/`gatedImpliedMs` are the evidence a duration trip acted on;
+ * `gatedRmsDbfs` is the evidence an energy trip acted on. Both are kept for
+ * the debug row and the copy-timings export so trip frequency — and, for
+ * energy trips, how close to the threshold — can be counted offline.
  */
 export interface SkippedTurn {
   id: string;
@@ -141,6 +147,10 @@ export interface SkippedTurn {
   timestamp: number;
   gatedSamples: number;
   gatedImpliedMs: number;
+  /** Which check tripped: duration (4b.2) or energy (4b.2 extension). */
+  gatedReason: "duration" | "energy";
+  /** Measured RMS dBFS — set only when `gatedReason` is "energy". */
+  gatedRmsDbfs?: number;
 }
 
 /** A turn-list entry: either a real captured/sent turn, or a gate trip. */

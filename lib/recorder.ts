@@ -37,6 +37,22 @@ const MIN_TURN_MS = 300;
 const MIN_TURN_SAMPLES = Math.round((MIN_TURN_MS / 1000) * SAMPLE_RATE);
 
 /**
+ * Minimum RMS loudness for a turn to be sent, in dBFS. Below this, a release
+ * cleared the duration gate (so it's a real, deliberate press) but captured
+ * only room noise, not speech — the 4b.2 duration gate can't catch this
+ * because the audio duration is legitimate; only loudness distinguishes it.
+ *
+ * Derivation (PLAN.md 4b.2 calibration, do not casually retune): Android
+ * phone steady-state background noise measured at -46.8 dBFS RMS (video
+ * playing, people talking); quietest phone speech -20.0 dBFS. Desktop
+ * background ceiling -56.9 dBFS; quietest desktop speech -44.3 dBFS. -42
+ * sits 4.8 dB above the phone noise ceiling — deliberately biased toward the
+ * noise floor, because gating real speech is a worse failure than passing a
+ * fabrication through to the model.
+ */
+const MIN_TURN_RMS_DBFS = -42;
+
+/**
  * TEMPORARY measurement instrumentation for the 4b.2 energy-gate decision
  * (PLAN.md): the duration gate above catches accidental taps but not a
  * genuine press capturing room noise/silence, which the model still
@@ -106,16 +122,25 @@ export interface Recording {
 }
 
 /**
- * Returned by stopRecording instead of a Recording when the captured sample
- * count fell below MIN_TURN_SAMPLES. Carries the evidence (sample count) the
- * gate acted on, not wall-clock press duration, since the two can diverge.
+ * Returned by stopRecording instead of a Recording when either insufficiency
+ * check trips: duration (too few samples — likely an accidental press) or
+ * energy (enough samples, but too quiet — likely room noise, not speech).
+ * Both checks gate the SAME turn shape; `reason` records which one fired.
+ * Duration is checked first, so a turn failing duration is always recorded
+ * as "duration" even if its RMS is also below MIN_TURN_RMS_DBFS — an energy
+ * verdict is only meaningful once there was enough audio to measure.
  */
 export interface GatedTurn {
   gated: true;
-  /** Captured sample count at SAMPLE_RATE. */
+  /** Which check tripped. */
+  reason: "duration" | "energy";
+  /** Captured sample count at SAMPLE_RATE — the evidence for a duration trip. */
   samples: number;
   /** Sample count converted to ms, for a human-readable debug readout. */
   impliedMs: number;
+  /** Measured RMS dBFS — set only when `reason` is "energy", so a threshold
+   * that turns out wrong is diagnosable from the export rather than guesswork. */
+  rmsDbfs?: number;
 }
 
 export class CaptureEngine {
@@ -292,11 +317,13 @@ export class CaptureEngine {
     let total = 0;
     for (const c of chunks) total += c.length;
 
-    // Gate before encoding: an accidental press never reaches floatToInt16/
-    // encodeWav, let alone the network.
+    // Gate 1 — duration: an accidental press never reaches floatToInt16/
+    // encodeWav, let alone the network. Checked before energy so a low-RMS
+    // accidental tap is recorded as a duration trip, not an energy trip.
     if (total < MIN_TURN_SAMPLES) {
       return {
         gated: true,
+        reason: "duration",
         samples: total,
         impliedMs: Math.round((total / SAMPLE_RATE) * 1000),
       };
@@ -310,9 +337,23 @@ export class CaptureEngine {
     }
 
     // Measured from the Float32 samples themselves — before encoding, not
-    // read back from the WAV bytes. Temporary (see the comment above);
-    // computing it here doesn't change what happens next below.
+    // read back from the WAV bytes. Feeds gate 2 below and the exported
+    // amplitude readout (lib/types.ts) on turns that pass both gates.
     const amplitude = measureAmplitude(samples);
+
+    // Gate 2 — energy: a genuine, deliberate press that cleared the duration
+    // gate but captured only room noise. The model still returns a
+    // confident, plausible fabrication with no error signal, so this must
+    // not reach the network either. See MIN_TURN_RMS_DBFS derivation above.
+    if (amplitude.rmsDbfs < MIN_TURN_RMS_DBFS) {
+      return {
+        gated: true,
+        reason: "energy",
+        samples: total,
+        impliedMs: Math.round((total / SAMPLE_RATE) * 1000),
+        rmsDbfs: amplitude.rmsDbfs,
+      };
+    }
 
     const pcm = floatToInt16(samples);
     const wav = encodeWav(pcm, SAMPLE_RATE);

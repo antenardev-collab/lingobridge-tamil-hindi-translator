@@ -65,14 +65,17 @@ function transportMs(t: TurnTiming): number | null {
  */
 function exportTurn(t: Turn) {
   if (t.status === "gated") {
-    // A gate trip never became a turn — export just the evidence the gate
-    // acted on, not the request/timing shape of a real turn.
+    // A gate trip never became a turn — export just the evidence whichever
+    // check (duration or energy) acted on, not the request/timing shape of a
+    // real turn.
     return {
       id: t.id,
       side: t.side,
       status: t.status,
+      gatedReason: t.gatedReason,
       gatedSamples: t.gatedSamples,
       gatedImpliedMs: t.gatedImpliedMs,
+      gatedRmsDbfs: t.gatedRmsDbfs !== undefined ? Number(t.gatedRmsDbfs.toFixed(1)) : null,
     };
   }
   const tm = t.timing;
@@ -141,12 +144,13 @@ export default function Home() {
     );
   }
 
-  // On a gate trip: the release never became a turn (below MIN_TURN_MS in
-  // lib/recorder.ts, an accidental press). No audio, no error state, no
-  // toast — just a debug-list entry, distinguishable by status "gated", so
-  // real-use trip frequency can be counted. prevReleaseRef is deliberately
-  // left untouched: a trip isn't a real turn and shouldn't reset the
-  // idle-gap baseline used for latency debug.
+  // On a gate trip (duration OR energy, lib/recorder.ts's two 4b.2 checks):
+  // the release never became a turn. No audio, no error state, no toast —
+  // just a debug-list entry, distinguishable by status "gated" and tagged
+  // with which check fired, so real-use trip frequency (and, for energy
+  // trips, how close to threshold) can be counted. prevReleaseRef is
+  // deliberately left untouched: a trip isn't a real turn and shouldn't
+  // reset the idle-gap baseline used for latency debug.
   function handleGated(side: Side, gated: GatedTurn) {
     setTurns((prev) => [
       ...prev,
@@ -157,6 +161,8 @@ export default function Home() {
         status: "gated",
         gatedSamples: gated.samples,
         gatedImpliedMs: gated.impliedMs,
+        gatedReason: gated.reason,
+        gatedRmsDbfs: gated.rmsDbfs,
       },
     ]);
   }
@@ -358,8 +364,12 @@ export default function Home() {
                   <div className="turn-debug">
                     {t.status === "gated" ? (
                       <>
-                        gated · {t.gatedSamples} samples · ~{t.gatedImpliedMs} ms ·{" "}
-                        {formatTime(t.timestamp)}
+                        gated ({t.gatedReason}) · {t.gatedSamples} samples · ~
+                        {t.gatedImpliedMs} ms
+                        {t.gatedReason === "energy" && t.gatedRmsDbfs !== undefined
+                          ? ` · rms ${t.gatedRmsDbfs.toFixed(1)} dBFS`
+                          : ""}{" "}
+                        · {formatTime(t.timestamp)}
                       </>
                     ) : (
                       <>
