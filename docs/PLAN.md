@@ -406,6 +406,9 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     53,093ms / 10,203ms / 9,079ms / 14,970ms / 7,813ms / 6,948ms — eight
     outliers across unrelated sessions and environments. The pattern is now
     consistent, not incidental.
+  - **Ninth tail outlier: 10,319ms server-side turn on a one-word
+    utterance (2026-08-16).** Same shape as the others — a short utterance,
+    a long server-side wait. Nine outliers now, still no timeout policy.
   - **Phone round trips this session (2026-08-16), an observation for 4d —
     not a conclusion.** 1462–2679ms end to end, server 811–1041ms, transport
     458–1690ms — materially better than the ~3.3s median that set the
@@ -646,38 +649,64 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     gate now runs two insufficiency tests on the same discard path —
     duration (300ms) and energy (−42 dBFS RMS) — distinguished by
     `gatedReason` in the debug row and the copy-timings export.
-    - **Phone calibration.** Non-speech steady state: −46.8 dBFS (n=2,
-      background on — TV/conversation audible). Quiet speech: −20.0 to
-      −16.4 dBFS. Normal speech: −14.7 to −14.1 dBFS. Desktop for
-      comparison: non-speech ceiling −56.9 dBFS, quiet-speech floor
-      −44.3 dBFS.
+    - **Verified on both devices (2026-08-16).** Desktop: three duration
+      trips (120/128/152ms) and three energy trips (−63.2, −64.0,
+      −49.5 dBFS) — both paths fire and are distinguishable,
+      `gatedRmsDbfs` correctly `null` on the duration trips. Phone: three
+      no-speech presses gated on energy (−74.3, −83.6, −83.9 dBFS); three
+      quiet-speech turns passed and translated correctly at −18.9, −20.9,
+      −22.4 dBFS. Margin on the phone: **51.9 dB** between the loudest
+      gated non-speech and the quietest passing speech. Across six
+      no-speech presses on two devices, **zero fabricated sentences
+      reached the model.**
+    - **Calibration data.** Phone non-speech: −46.8 dBFS (n=2, background
+      audible) in one session, −74.3 to −83.9 dBFS in another; quiet
+      speech −22.4 to −16.4 dBFS; normal speech −14.7 to −14.1 dBFS.
+      Desktop: non-speech −67.0 to −56.9 dBFS; quiet speech −44.3 to
+      −24.1 dBFS.
+    - **Discrepancy, recorded honestly.** Phone non-speech measured
+      **~30 dB quieter** in the verification session than in the
+      calibration session. Unexplained — possibly a quieter room,
+      possibly AGC ramp state, possibly the earlier −46.8 pair not being
+      the steady state it was assumed to be. The threshold works at both
+      levels observed so far, but the phone noise ceiling is **less
+      firmly established than the calibration write-up implied.** If a
+      loud environment pushes background above −42 dBFS, the gate stops
+      firing. Confirm or revise at 4d.
     - **AGC finding.** Phone speech runs 20+ dB louder than desktop, with
-      peaks at −0.1 to −1.5 dBFS. Non-speech readings were bimodal:
-      cold-start turns measured −74.5/−75.8 dBFS, later turns measured
-      −46.8 dBFS twice, agreeing to four decimal places in linear terms.
-      This is AGC gain ramping — roughly 28 dB. `CaptureEngine` is
-      persistent (Slice 3), so −46.8 is the steady state and the
-      near-silent early values are cold-start artefacts, not the floor to
-      calibrate against. **The threshold is calibrated against the ramped
-      (steady-state) reading, not the cold-start one.**
+      peaks at −0.1 to −2.5 dBFS. Non-speech readings were bimodal in the
+      calibration session: cold-start turns measured −74.5/−75.8 dBFS,
+      later turns measured −46.8 dBFS twice, agreeing to four decimal
+      places in linear terms — consistent with roughly 28 dB of AGC gain
+      ramping. `CaptureEngine` is persistent (Slice 3), so the ramped
+      state is the operating state the threshold is calibrated against,
+      not the cold-start one — though see the discrepancy note above:
+      the verification session's non-speech readings sat closer to the
+      cold-start range than the assumed steady state.
     - **Slice 5 note — do not act on it.** Hands-free means the mic stays
       open continuously with AGC fully ramped, so the steady-state noise
-      floor may sit higher than −46.8 dBFS and this threshold may need
-      revisiting then.
+      floor may sit higher than observed here and this threshold may
+      need revisiting then.
     - **Native note.** The gate depends on browser AGC and noise-suppression
       behaviour. Android native gives different, more direct control over
       both, so `-42` does not transfer as-is to a native rebuild.
-    - **The threshold is provisional.** Phone non-speech rests on n=2. 4d
-      is where it gets confirmed or revised, not this slice.
-    - **New fabrication observed on a non-speech phone turn:**
-      `என்ன பண்ணிட்டு இருக்கீங்க?` — the first invented sentence with no
-      commerce vocabulary at all, confirming the venue-phrase removal
-      changed *what* the model invents, not *whether* it invents (see the
-      Slice 2 prompt-edit subsection above). Occurred on turns measuring
-      −74.5 and −75.8 dBFS — the cold-start artefact readings, not the
-      steady state.
+    - **The threshold is provisional.** Confirmed against real presses on
+      both devices with a wide margin, but the calibration/verification
+      discrepancy above means the phone noise ceiling itself isn't fully
+      pinned down. 4d is where it gets confirmed or revised, not this
+      slice.
+    - **Fabrication observed on a non-speech phone turn, before the gate
+      existed:** `என்ன பண்ணிட்டு இருக்கீங்க?` — the first invented sentence
+      with no commerce vocabulary at all, confirming the venue-phrase
+      removal changed *what* the model invents, not *whether* it invents
+      (see the Slice 2 prompt-edit subsection above). Occurred at −74.5
+      and −75.8 dBFS — from near-total silence.
     - **`gatedSamples: 0` observed on the phone.** The zero-sample case is
       real, not theoretical — the duration gate caught it cleanly.
+    - **The amplitude instrumentation stays in place** (debug row +
+      `exportTurn`, both bullets above) until 4d confirms the threshold
+      holds in real use — it's the only way a wrong threshold would be
+      diagnosable rather than guessed at.
 - **4c — TTS route** (`/api/speak`): Gemini native TTS, streaming, playback on the
   first chunk, per-side fixed voice, mic hard-gate on `play()` + unmute on `ended`
   + 250ms (decision 2). Do **not** pipeline translate→TTS this slice (measured TTFA
