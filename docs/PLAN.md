@@ -406,6 +406,16 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
     53,093ms / 10,203ms / 9,079ms / 14,970ms / 7,813ms / 6,948ms — eight
     outliers across unrelated sessions and environments. The pattern is now
     consistent, not incidental.
+  - **Phone round trips this session (2026-08-16), an observation for 4d —
+    not a conclusion.** 1462–2679ms end to end, server 811–1041ms, transport
+    458–1690ms — materially better than the ~3.3s median that set the
+    Slice 4 sub-2s target (decision 3). Too small and too session-local to
+    revise the target on; carried to 4d for a real sample.
+  - **Unexplained: `impliedHz: 10112` on a 0.544s capture (2026-08-16).**
+    Roughly a third of samples missing at the front of that turn — larger
+    than the known ~200ms idle-wake loss (Slice 3 findings) and the turn
+    wasn't flagged as a cold start. Not investigated this session; carried
+    to 4d.
   - **`x-vercel-id` is NOT the execution region — cost us a wrong conclusion
     once, recording so it doesn't happen again.** A production sanity POST from
     Chennai read `vercelId: "bom1::…"` off the request header and was briefly
@@ -632,6 +642,42 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
       quietest speech clip (−44.3 dBFS) mis-transcribed `சரி` as `ஸாரி` — a
       second reason not to set the threshold aggressively: turns nearest
       the line are already fragile.
+  - **Energy gate shipped (2026-08-16): `MIN_TURN_RMS_DBFS = -42`.** The
+    gate now runs two insufficiency tests on the same discard path —
+    duration (300ms) and energy (−42 dBFS RMS) — distinguished by
+    `gatedReason` in the debug row and the copy-timings export.
+    - **Phone calibration.** Non-speech steady state: −46.8 dBFS (n=2,
+      background on — TV/conversation audible). Quiet speech: −20.0 to
+      −16.4 dBFS. Normal speech: −14.7 to −14.1 dBFS. Desktop for
+      comparison: non-speech ceiling −56.9 dBFS, quiet-speech floor
+      −44.3 dBFS.
+    - **AGC finding.** Phone speech runs 20+ dB louder than desktop, with
+      peaks at −0.1 to −1.5 dBFS. Non-speech readings were bimodal:
+      cold-start turns measured −74.5/−75.8 dBFS, later turns measured
+      −46.8 dBFS twice, agreeing to four decimal places in linear terms.
+      This is AGC gain ramping — roughly 28 dB. `CaptureEngine` is
+      persistent (Slice 3), so −46.8 is the steady state and the
+      near-silent early values are cold-start artefacts, not the floor to
+      calibrate against. **The threshold is calibrated against the ramped
+      (steady-state) reading, not the cold-start one.**
+    - **Slice 5 note — do not act on it.** Hands-free means the mic stays
+      open continuously with AGC fully ramped, so the steady-state noise
+      floor may sit higher than −46.8 dBFS and this threshold may need
+      revisiting then.
+    - **Native note.** The gate depends on browser AGC and noise-suppression
+      behaviour. Android native gives different, more direct control over
+      both, so `-42` does not transfer as-is to a native rebuild.
+    - **The threshold is provisional.** Phone non-speech rests on n=2. 4d
+      is where it gets confirmed or revised, not this slice.
+    - **New fabrication observed on a non-speech phone turn:**
+      `என்ன பண்ணிட்டு இருக்கீங்க?` — the first invented sentence with no
+      commerce vocabulary at all, confirming the venue-phrase removal
+      changed *what* the model invents, not *whether* it invents (see the
+      Slice 2 prompt-edit subsection above). Occurred on turns measuring
+      −74.5 and −75.8 dBFS — the cold-start artefact readings, not the
+      steady state.
+    - **`gatedSamples: 0` observed on the phone.** The zero-sample case is
+      real, not theoretical — the duration gate caught it cleanly.
 - **4c — TTS route** (`/api/speak`): Gemini native TTS, streaming, playback on the
   first chunk, per-side fixed voice, mic hard-gate on `play()` + unmute on `ended`
   + 250ms (decision 2). Do **not** pipeline translate→TTS this slice (measured TTFA
