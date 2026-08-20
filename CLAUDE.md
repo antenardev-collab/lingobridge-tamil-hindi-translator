@@ -46,11 +46,19 @@ translates without anyone touching it. We build toward that in stages.
     The `test-clips/*.wav` are already WAV, so the Slice 2 eval needs no change.
 - **TTS (Slice 4c): ElevenLabs streaming TTS is LOCKED** as the second leg —
   `POST /v1/text-to-speech/{voice_id}/stream`, model `eleven_flash_v2_5`,
-  `language_code` set explicitly per direction (`ta`/`hi`). Voices: Tamil
-  `wLIQpmGi7jT7aiEmDsE3` (Janani), Hindi `35h4XgJYQYdHtGbOCg7x` (Rohit) — both
-  `professional` category (Voice Library) and require a paid ElevenLabs plan
-  for API access; account is on **Starter**. (Leg 1 — STT + translation — is
-  unchanged: Gemini direct, `gemini-3.1-flash-lite`, `temperature: 0`.)
+  output format `mp3_44100_128`, `language_code` set explicitly per direction
+  (`ta`/`hi`). Voices: Tamil `wLIQpmGi7jT7aiEmDsE3` (Janani), Hindi
+  `35h4XgJYQYdHtGbOCg7x` (Rohit) — both `professional` category (Voice
+  Library) and require a paid ElevenLabs plan for API access; account is on
+  **Starter**. (Leg 1 — STT + translation — is unchanged: Gemini direct,
+  `gemini-3.1-flash-lite`, `temperature: 0`.)
+  - **Output format is MP3, not PCM (2026-08-20).** `pcm_24000` was the
+    initial choice, made for a chunk-scheduled playback path. Measurement
+    (`docs/PLAN.md` → Slice 4, "Client playback format") showed chunked
+    playback could save at most 15–245ms server-side, while PCM runs roughly
+    3×–12× the payload of MP3 on the phone-to-server leg — the leg
+    measurement showed to be the dominant and noisiest cost. Fetch the
+    complete response, then play; no chunk scheduling.
   - **`eleven_multilingual_v2` is ElevenLabs' own default in their sample
     code — it is NOT our model.** It is slower and twice the price. Any code
     that calls ElevenLabs must set `model_id` explicitly to
@@ -82,12 +90,13 @@ silently work around it.
    mic on `play()`, unmute on `ended` plus a 250ms reverb tail. Never try to
    detect "is this the machine talking" from the audio itself.
 
-   **Note (2026-08-20, ElevenLabs streaming):** the mechanism described above
-   (`play()`/`ended` on an `<audio>` element) may not survive a streamed-PCM
-   playback path — Web Audio has no equivalent single `ended` event for a
-   chunked utterance. The *intent* — hard mic gate for the full duration of
-   playback — is unchanged and binding; only the implementation detail is
-   open, for 4c to solve.
+   **Note (2026-08-20, withdrawn):** a chunked-playback path (streamed PCM,
+   scheduled via Web Audio) was considered — and rejected on measurement; see
+   `docs/PLAN.md` → Slice 4, "Client playback format." Client playback
+   fetches the complete audio response and plays it through an `<audio>`
+   element, so `play()` and `ended` both exist exactly as this decision
+   describes. **Decision 2 stands exactly as written** — the earlier caveat
+   here no longer applies.
 
 3. **Latency beats model quality.** A 5-second pause kills a real conversation.
    Prefer fast mid-tier multimodal models (Gemini Flash class) over frontier

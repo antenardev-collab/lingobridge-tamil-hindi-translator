@@ -467,6 +467,48 @@ cold start that Vercel's bundling doesn't cover, revisit the split.
     that would move. **The 12-request BOM1 baseline was not run.** Don't reopen
     this without new evidence that Gemini responds faster to calls originating
     near Mumbai specifically.
+  - **Region experiment RE-RUN with the correct comparison (2026-08-20) —
+    original conclusion holds, but the 2026-08-14 entry above rested on the
+    wrong comparison.** That close compared IAD1→Gemini against calling
+    Gemini *directly from a Chennai desktop*, bypassing Vercel entirely — not
+    the same comparison as BOM1→Gemini vs. IAD1→Gemini through our own
+    deployment. The correct comparison has now actually been run. All
+    client-side figures below are from Chennai on the dev machine.
+    - **`/api/translate`, `requestToCompleteMs`, ten warm requests per
+      region:**
+      - IAD1: ta 1050, 1017, 1011, 1059, 1510ms; hi 1262, 772, 931, 1095,
+        1094ms. Median ~1050ms, worst 1510ms.
+      - BOM1: ta 1421, 2537, 42080, 8081, 9971ms; hi 1949, 5992, 3773, 1606,
+        1656ms. Median ~2200ms, worst **42080ms**.
+      - IAD1 reproduces the 811–1041ms figure already recorded from Slice 4a
+        (phone round trips, above).
+    - **`/api/tts`, `providerFirstAudioByteMs`, warm requests:** IAD1 median
+      ~144ms, BOM1 median ~173ms — essentially a tie. ElevenLabs is
+      London-headquartered with no documented India region; the near-parity
+      suggests edge presence closer to India than the headquarters implies.
+    - **Derived client-to-Vercel transport:** IAD1 roughly 400–920ms, BOM1
+      roughly 45–232ms — BOM1 saves roughly 600ms of transport.
+    - **Conclusion: IAD1 retained.** BOM1's ~600ms transport saving is not
+      worth multi-second and occasionally forty-second variance on the
+      translate leg, which is the dominant term — transport was under 1% of
+      the 42-second outlier.
+  - **Cold starts occur mid-run, not only on the first request (2026-08-20).**
+    During the IAD1 translate probe above, request 4 of the ten back-to-back
+    warm requests returned `coldStart: true` — Vercel started a second
+    instance while the first was still busy, not just on a cold first call.
+    Cost roughly 500ms of transport, minimal server time. **Consequence for
+    the parked warm-up-ping item (Open items, below): a ping on app open
+    addresses first-turn latency only and would not have prevented this.**
+    Concurrency-driven cold starts are a separate problem from first-request
+    cold starts.
+  - **Instrumentation gap on the translate leg (2026-08-20).**
+    `requestToFirstByteMs` is `null` and `weStream` is `false` on every
+    `/api/translate` request — expected, since translate-leg streaming was
+    ruled out above (firstChunk landing ~2ms before complete). **Consequence:
+    `requestToCompleteMs` is one opaque block** — a 42-second outlier (see the
+    region re-run above) cannot be attributed to network, queueing, or model
+    time from this data alone. Recorded as a 4d instrumentation question, not
+    solved here.
   - **Payload-buffering check — VERIFIED FLAT (2026-08-14).** 4a's transport
     derivation, `(client encoded→complete) − serverTotalMs`, is only valid if
     Vercel buffers the request body before invoking the function; if it invokes
@@ -747,6 +789,12 @@ cold start that Vercel's bundling doesn't cover, revisit the split.
   built against. **Rationale:** ElevenLabs handles romanised Latin input well
   in testing, so whether a transliterator is needed at all should be decided
   against real STT output from the deployed pipeline rather than assumed.
+- **4c logging gap — `coldStart` missing from the `/api/tts` completion log
+  (2026-08-20).** The route's completion `console.log` line omits
+  `coldStart`, so Vercel cold starts on `/api/tts` are currently invisible —
+  contrast with `/api/translate`'s `debug.coldStart` (directly observable —
+  see the region re-run above, where a mid-run cold start showed up in it).
+  Add it when the route is next edited, in 4d.
 - **4d — on-device release-to-first-audio test**, end to end. Also owns, per
   the 4c narrowing above: the transliterator-wiring decision
   (`guardedTransliterate`) and the timeout-and-abandon policy (open since
@@ -868,6 +916,36 @@ against.
   cannot be automated — it requires the voice owner to record a verification
   phrase.
 
+### Client playback format — MP3 locked, chunked playback rejected (2026-08-20)
+
+- **Server-side, first audio byte to stream end was 15–245ms.** Chunked
+  client playback (MediaSource, scheduled buffer append) could save at most
+  that much.
+- **Transport measured 400–920ms on IAD1** (region re-run, above) **and was
+  the noisiest term** — an order of magnitude bigger than what chunking could
+  save.
+- **Payload size, by format:** PCM at 24kHz mono 16-bit is roughly 48 KB per
+  second of speech; MP3 at 128kbps is roughly 16 KB; `mp3_22050_32` is
+  roughly 4 KB.
+- **Therefore: fetch the complete response, then play.** No MediaSource, no
+  chunk scheduling. Locked output format is MP3 (`mp3_44100_128`), not
+  `pcm_24000` — see CLAUDE.md → Stack.
+- **This restores locked decision 2 exactly as written** — `play()`/`ended`
+  on a normal `<audio>` element, no chunked-stream caveat. See CLAUDE.md →
+  Locked architecture decisions, decision 2.
+- **Chunked MP3 playback is straightforward in native Android** (ExoPlayer or
+  MediaCodec), so the rejected complexity here is a web-platform artefact,
+  parked under the standing web-to-native rule — not a permanent design
+  conclusion that would also bind a native rebuild.
+
+### End-to-end budget, as currently measured (2026-08-20)
+
+Translate ~1050ms + TTS ~194ms + two client transport crossings at ~700ms
+each ≈ **2.6s to first audio**, from Chennai on IAD1, before any client
+playback. This exceeds locked decision 3's under-2s target; TTS is the
+smallest of the three terms. **No amendment to decision 3 is proposed here —
+that decision remains parked for 4d.**
+
 ---
 
 ## Slice 5 — Hands-free toggle
@@ -947,12 +1025,15 @@ ground-truth.json exists to test cross-voice routing here.
   already enabled, rather than a Pro-tier feature — so the question is which
   *specific* controls are tier-gated, not whether Pro "fixes cold starts."
 - **Parked for 4d — warm-up ping on app open.** Fire a lightweight request
-  when the app loads so the first real turn hits a warm function. Two
-  caveats to carry: it may need to hit both routes, since route bundling
-  into a single function is unverified (see Endpoint topology, above); and
-  it addresses first-turn latency only — the recorded tail outliers (4a,
-  above) were mid-conversation, so this is unlikely to be the fix for the
-  tail.
+  when the app loads so the first real turn hits a warm function. Caveats to
+  carry: it may need to hit both routes, since route bundling into a single
+  function is unverified (see Endpoint topology, above); it addresses
+  first-turn latency only — the recorded tail outliers (4a, above) were
+  mid-conversation, so this is unlikely to be the fix for the tail; and,
+  confirmed by measurement (2026-08-20), a mid-run cold start was directly
+  observed on request 4 of a ten-request warm run (see the region re-run,
+  Slice 4 → 4a) — concurrency-driven cold starts are a separate problem a
+  startup ping cannot address either.
 
 ## Session hygiene
 
