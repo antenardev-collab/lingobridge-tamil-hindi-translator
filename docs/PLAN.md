@@ -316,9 +316,31 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
 > button. If TTS fails, the text stays on screen — never block on audio.
 
 > **Superseded — TTS provider.** The blockquote above (OpenRouter
-> `/api/v1/audio/speech`) predates the Slice 2 TTS findings. CLAUDE.md → Stack now
-> locks **Gemini native TTS** (`generateContent`, `responseModalities:["AUDIO"]`)
-> for both languages. Build 4c against CLAUDE.md, not this blockquote.
+> `/api/v1/audio/speech`) predates the Slice 2 TTS findings, and the Slice 2
+> Gemini-TTS lock it was later superseded by is itself superseded again.
+> CLAUDE.md → Stack now locks **ElevenLabs streaming TTS**
+> (`eleven_flash_v2_5`) for both languages. Build 4c against CLAUDE.md, not
+> this blockquote.
+
+### Endpoint topology — Option A locked (2026-08-20)
+
+`/api/translate` and `/api/tts` are **separate routes**, not one combined
+endpoint.
+
+- A failed TTS leg can be retried without re-uploading the audio.
+- Two independent timeout deadlines instead of one covering two dissimilar
+  model calls.
+- The translated text survives when audio generation fails.
+- A standalone `/api/tts` is the clean seam for a future TTS provider swap.
+
+**Counter-argument, recorded:** Option A costs one extra crossing of the
+noisy mobile leg (client → `/api/tts`) that a combined endpoint would avoid.
+
+**Reconsider Option B if measurement shows the TTS route taking its own cold
+starts.** Vercel documents that it bundles multiple Next.js routes into a
+single function, which should make that unlikely — but it is **unverified
+for this repo**. If 4c/4d measurement shows `/api/tts` paying an independent
+cold start that Vercel's bundling doesn't cover, revisit the split.
 
 ### Slice 4 sub-slices
 
@@ -566,6 +588,11 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
      Currently logged only, in-memory, no UI. A sustained outage needs to be
      visible to a user/operator in real time, not just discoverable after the
      fact in an exported log — not designed or built yet.
+  - **Deferred to 4d (2026-08-20), see the narrowed 4c scope below.** Both
+    questions stay open, but 4c no longer has to answer them: ElevenLabs
+    handles romanised Latin input well in testing, so whether a
+    transliterator is needed *at all* should be decided against real STT
+    output from the deployed pipeline, not assumed ahead of it.
 - **4b.2 — client-side minimum-duration gate (2026-08-15, not part of the
   original six-slice plan).** Added after a live accidental press: a 92ms tap
   (`payloadBytes` 3116 — 1536 samples after the 44-byte WAV header) was
@@ -707,12 +734,23 @@ preview URL. Full spoken back-and-forth waits on Slice 4 (voice output).
       `exportTurn`, both bullets above) until 4d confirms the threshold
       holds in real use — it's the only way a wrong threshold would be
       diagnosable rather than guessed at.
-- **4c — TTS route** (`/api/speak`): Gemini native TTS, streaming, playback on the
-  first chunk, per-side fixed voice, mic hard-gate on `play()` + unmute on `ended`
-  + 250ms (decision 2). Do **not** pipeline translate→TTS this slice (measured TTFA
-  ~1.3s, flat across input length; chunking risks prosody breaks and mid-numeral
-  flushes).
-- **4d — on-device release-to-first-audio test**, end to end.
+- **4c — TTS route only** (`/api/tts`): build the route, deploy, measure
+  end-to-end. **NARROWED SCOPE (2026-08-20).** ElevenLabs streaming
+  (`eleven_flash_v2_5`), playback on the first chunk, per-side fixed voice
+  (Janani/Rohit — see CLAUDE.md → Stack), mic hard-gate spanning the full
+  duration of playback (decision 2 — see the CLAUDE.md note under decision 2
+  about the `play()`/`ended` mechanism itself possibly needing to change for
+  streamed PCM). Do **not** pipeline translate→TTS this slice. Transliterator
+  wiring (the open `guardedTransliterate` questions above) and a
+  timeout-and-abandon policy both **move to 4d** — see the Endpoint topology
+  section above for the `/api/translate` vs `/api/tts` split this route is
+  built against. **Rationale:** ElevenLabs handles romanised Latin input well
+  in testing, so whether a transliterator is needed at all should be decided
+  against real STT output from the deployed pipeline rather than assumed.
+- **4d — on-device release-to-first-audio test**, end to end. Also owns, per
+  the 4c narrowing above: the transliterator-wiring decision
+  (`guardedTransliterate`) and the timeout-and-abandon policy (open since
+  4a's tail-latency findings, above).
 
 **Done when:** audio plays and mic mute/unmute is verifiable in the console.
 Benchmark Tamil and Hindi voice quality across available TTS models — Tamil is
@@ -768,6 +806,67 @@ usually the weaker one.
   `gemini-3.1-flash-tts-preview` as the recommended replacement for 2.5 TTS. Both
   speaking-path models are **preview** with no shutdown date; plan to revisit once
   a GA TTS model ships.
+
+### ElevenLabs evaluation (2026-08-20)
+
+Superseded the Gemini-TTS notes above; see CLAUDE.md → Stack for the lock.
+Measured with `scripts/eleven-ttfa-probe.mjs` against the two library voices
+(Janani/Rohit). **Caveat carried across every measurement below: all figures
+were taken from Chennai on the dev machine, not from Vercel IAD1, and are
+therefore not the production numbers** — they establish shape (flat-vs-length,
+nondeterminism, cold-connection cost), not what 4c/4d should set timeouts
+against.
+
+- **TTFA median ~200ms in both Tamil and Hindi, flat across input lengths
+  from 29 to 164 characters.** Flat-across-length is the streaming
+  fingerprint — a non-streaming response would show TTFA growing with output
+  length; it doesn't, so the stream genuinely starts emitting before the
+  full utterance finishes synthesising.
+- **Total completion 200–490ms depending on length.**
+- **Cold-connection cost is significant.** First request: 2107ms (ta),
+  3383ms (hi); settling to ~190ms thereafter. **Connection reuse is a route
+  design requirement, not an optimisation** — `/api/tts` must not open a
+  fresh connection per turn.
+- **`pcm_24000` returns 200 on library voices**, so the client playback layer
+  can be built once against streamed PCM and remain provider-neutral.
+- **PCM at 44.1kHz is gated to the Pro tier — not needed.** 24kHz mono
+  matches what Gemini TTS returns anyway, so nothing downstream loses
+  fidelity by staying on `pcm_24000`.
+- **Nondeterminism — measured (10x identical requests per language).** 4
+  distinct byte sizes at 10.15% spread (Tamil), 4 distinct sizes at 8.68%
+  spread (Hindi). ElevenLabs is nondeterministic by design; a `seed`
+  parameter improves consistency but does not guarantee it. **Consequence:
+  unlike Gemini at `temperature: 0`, a correct reading cannot be certified by
+  a single listen.** Any future TTS quality check must be repeat-run, not
+  single-pass. **This makes `npm run eval:tts`'s determinism assumption
+  invalid for this provider** — that harness was built against Gemini TTS on
+  a fixed prompt and text, and doesn't account for a provider whose output
+  varies request-to-request on identical input.
+- **Known limitation — occasional word slur.** ElevenLabs occasionally
+  mis-forms a word boundary, producing an audible slur ("order" heard as
+  "anorder", "9:30 AM आइए" heard as "9:30 A mia").
+  - Occurs on pure Devanagari input, not only at Latin/native-script
+    boundaries.
+  - A text-level workaround was tested and failed: rewriting `AM` as `ए एम`
+    still drifted.
+  - Not deterministic — two identical requests produced one clean and one
+    drifted rendering.
+  - **Therefore not fixable by a pre-TTS text transform. The earlier
+    hypothesis that `lib/transliterate.ts` could repair it is disproven.**
+  - No server-side signal: the response is a valid audio stream either way.
+    Only a listener detects it.
+  - **Assessed as acceptable under the "manageable, not accurate" bar** — it
+    degrades toward ugly, not toward wrong. **Escalate if it is ever
+    observed slurring a digit**, since numbers have no tolerance.
+- **Cost and plan facts.** ElevenLabs Starter, ₹528/month, 30,000 credits.
+  Library (`professional` category) voices require a paid subscription for
+  API access — a free account can list them via `GET /v1/voices` but
+  generation returns HTTP 402. Pay-as-you-go credit top-ups do not lift
+  plan-level restrictions and would not have fixed this. Instant Voice
+  Cloning is available from Starter and is API-creatable via
+  `POST /v1/voices/add`; Professional Voice Cloning requires Creator and
+  cannot be automated — it requires the voice owner to record a verification
+  phrase.
 
 ---
 
@@ -835,8 +934,25 @@ ground-truth.json exists to test cross-voice routing here.
 - **`expectedTranslation` fields need native-speaker verification.** They were
   drafted by an LLM. Until a Tamil and a Hindi speaker sign off, treat eval
   register judgements as provisional.
+- **Debt — the 26 `expectedTranslation` strings were never run through
+  ElevenLabs.** The provider gate (see ElevenLabs evaluation, above) was
+  decided on the number-stress set (`test-clips/elevenlabs-number-stress.md`)
+  plus intonation samples instead. Unpaid, alongside the venue-phrase
+  revalidation debt above.
 - Missing clip types: proper names (people, places), and clips with heavy
   background noise. Add when convenient — not blocking.
+- **Parked for 4d — Vercel plan upgrade.** Investigate whether any
+  cold-start controls are gated behind paid Vercel tiers. Frame the question
+  precisely: warm-instance behaviour is largely a Fluid compute feature,
+  already enabled, rather than a Pro-tier feature — so the question is which
+  *specific* controls are tier-gated, not whether Pro "fixes cold starts."
+- **Parked for 4d — warm-up ping on app open.** Fire a lightweight request
+  when the app loads so the first real turn hits a warm function. Two
+  caveats to carry: it may need to hit both routes, since route bundling
+  into a single function is unverified (see Endpoint topology, above); and
+  it addresses first-turn latency only — the recorded tail outliers (4a,
+  above) were mid-conversation, so this is unlikely to be the fix for the
+  tail.
 
 ## Session hygiene
 

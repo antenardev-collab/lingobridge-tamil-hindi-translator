@@ -44,20 +44,26 @@ translates without anyone touching it. We build toward that in stages.
     rewritten to client-side AudioWorklet WAV encoding (16kHz mono PCM16) in
     Slice 3. **Not** server-side ffmpeg — no server audio dep, no extra latency.
     The `test-clips/*.wav` are already WAV, so the Slice 2 eval needs no change.
-- **TTS (Slice 4):** Google **Gemini native TTS** (`generateContent`,
-  `responseModalities:["AUDIO"]`) — covers both Tamil and Hindi; OpenAI/Mistral
-  coverage is weaker, and OpenRouter's Gemini TTS is PCM-only. Findings from the
-  Slice 2 listening evals:
-  - **Latin script in TTS input degrades pronunciation** — in both directions and
-    in both forms (full romanisation *and* individual loanwords). **Transliterate
-    the loanword into the target script before TTS; it sounds materially better.**
-    This preserves decision 5: the shared loanword survives, only its script
-    changes ("work" → வொர்க்/वर्क, never வேலை/काम).
-  - **Operational quirks to handle in `/api/speak`:** very short inputs return
-    `finishReason: OTHER` with no audio (pad + retry); an intra-word hyphen
-    (`வொர்க்-கு`) causes a deterministic 400 (strip it); the 2.5 TTS preview
-    rate-limits at ~15 req/min, so batch work must be paced and honour the 429
-    `retryDelay`.
+- **TTS (Slice 4c): ElevenLabs streaming TTS is LOCKED** as the second leg —
+  `POST /v1/text-to-speech/{voice_id}/stream`, model `eleven_flash_v2_5`,
+  `language_code` set explicitly per direction (`ta`/`hi`). Voices: Tamil
+  `wLIQpmGi7jT7aiEmDsE3` (Janani), Hindi `35h4XgJYQYdHtGbOCg7x` (Rohit) — both
+  `professional` category (Voice Library) and require a paid ElevenLabs plan
+  for API access; account is on **Starter**. (Leg 1 — STT + translation — is
+  unchanged: Gemini direct, `gemini-3.1-flash-lite`, `temperature: 0`.)
+  - **`eleven_multilingual_v2` is ElevenLabs' own default in their sample
+    code — it is NOT our model.** It is slower and twice the price. Any code
+    that calls ElevenLabs must set `model_id` explicitly to
+    `eleven_flash_v2_5`; never rely on the provider default.
+  - **Gemini native TTS was evaluated and rejected.** Reasons: no stable
+    (non-preview) TTS model on the Gemini Developer API; a documented defect
+    where the model occasionally returns text tokens instead of audio tokens;
+    and measured TTFA roughly six times slower than ElevenLabs.
+  - **Latin script in TTS input degrades pronunciation** — in both directions
+    and in both forms (full romanisation *and* individual loanwords).
+    **Transliterate the loanword into the target script before TTS; it sounds
+    materially better.** This preserves decision 5: the shared loanword
+    survives, only its script changes ("work" → வொர்க்/वर्क, never வேலை/काम).
 - No database. Session state lives in React memory only.
 
 ## Locked architecture decisions
@@ -75,6 +81,13 @@ silently work around it.
    control TTS playback, so we know when the machine is speaking. Hard-gate the
    mic on `play()`, unmute on `ended` plus a 250ms reverb tail. Never try to
    detect "is this the machine talking" from the audio itself.
+
+   **Note (2026-08-20, ElevenLabs streaming):** the mechanism described above
+   (`play()`/`ended` on an `<audio>` element) may not survive a streamed-PCM
+   playback path — Web Audio has no equivalent single `ended` event for a
+   chunked utterance. The *intent* — hard mic gate for the full duration of
+   playback — is unchanged and binding; only the implementation detail is
+   open, for 4c to solve.
 
 3. **Latency beats model quality.** A 5-second pause kills a real conversation.
    Prefer fast mid-tier multimodal models (Gemini Flash class) over frontier
