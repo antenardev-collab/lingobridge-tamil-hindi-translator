@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { synthesiseSpeech, type TtsFailure } from "@/lib/tts/elevenlabs";
+import { synthesiseSpeech, type TtsFailure, type TtsVoiceGender } from "@/lib/tts/elevenlabs";
 
 /**
  * Slice 4c cold-start detector — same pattern as /api/translate: module
@@ -108,8 +108,10 @@ function instrumentAudioStream(
   source: ReadableStream<Uint8Array>,
   ctx: {
     entry: number;
+    coldStart: boolean;
     providerHeadersMs: number;
     targetLang: string;
+    voiceGender: string;
     textLength: number;
     execRegion: string | null;
   },
@@ -130,7 +132,13 @@ function instrumentAudioStream(
       JSON.stringify({
         route: "/api/tts",
         outcome,
+        // coldStart was previously missing from this line entirely — a
+        // recorded gap (docs/PLAN.md -> Slice 4, "4c logging gap"). Read the
+        // same way /api/translate reads it: read-then-set INSTANCE_WARMED
+        // once per function instance, at request entry.
+        coldStart: ctx.coldStart,
         targetLang: ctx.targetLang,
+        voiceGender: ctx.voiceGender,
         textLength: ctx.textLength,
         providerHeadersMs: ctx.providerHeadersMs,
         providerFirstAudioByteMs,
@@ -190,8 +198,12 @@ function instrumentAudioStream(
  *   targetLang  ('ta'|'hi')            required — the OUTPUT language (not
  *                                      the speaker's side — see
  *                                      lib/tts/elevenlabs.ts's TtsTargetLang)
+ *   voiceGender ('male'|'female')      optional FOR NOW — see the
+ *                                      TODO(5) below; will become required
+ *                                      once the Slice 5 setup UI exists.
+ *                                      An explicitly invalid value still 400s.
  *
- * On success, returns the raw PCM stream directly as the response body — no
+ * On success, returns the audio stream directly as the response body — no
  * validated JSON envelope, unlike /api/translate. Node runtime: matches
  * /api/translate's convention (this route doesn't itself need Buffer, but
  * the whole API surface stays on one runtime for consistency).
@@ -234,8 +246,26 @@ export async function POST(req: Request) {
     );
   }
 
+  const voiceGenderRaw = body.voiceGender;
+  let voiceGender: TtsVoiceGender;
+  if (voiceGenderRaw === undefined) {
+    // TODO(5): remove this default once the Slice 5 setup UI supplies
+    // voiceGender on every request. Gender is a per-speaker registration
+    // choice (lib/tts/elevenlabs.ts's synthesiseSpeech), never inferred or
+    // defaulted in the long run — this default exists only because no
+    // client sends the field yet.
+    voiceGender = "female";
+  } else if (voiceGenderRaw === "male" || voiceGenderRaw === "female") {
+    voiceGender = voiceGenderRaw;
+  } else {
+    return NextResponse.json(
+      { error: "'voiceGender' must be 'male' or 'female'" },
+      { status: 400 },
+    );
+  }
+
   const requestSent = performance.now();
-  const result = await synthesiseSpeech(text, targetLang);
+  const result = await synthesiseSpeech(text, targetLang, voiceGender);
   const responseReceived = performance.now();
 
   if (!result.ok) {
@@ -276,22 +306,23 @@ export async function POST(req: Request) {
   const providerHeadersMs = Math.round(responseReceived - requestSent);
   const audio = instrumentAudioStream(result.audio, {
     entry,
+    coldStart,
     providerHeadersMs,
     targetLang,
+    voiceGender,
     textLength: text.length,
     execRegion,
   });
 
   const headers = new Headers({
-    // audio/L16 = linear 16-bit PCM (RFC 2586) — the correct content type
-    // for raw, container-less PCM (this is NOT a WAV file: no RIFF header).
-    "Content-Type": "audio/L16",
-    // Raw PCM has no self-describing header the client can read the way it
-    // would from a WAV file, so the parameters travel as headers instead —
-    // taken from TtsSuccess, never hardcoded here.
-    "X-Audio-Sample-Rate": String(result.sampleRate),
-    "X-Audio-Channels": String(result.channels),
-    "X-Audio-Bit-Depth": String(result.bitDepth),
+    // Taken from TtsSuccess, never hardcoded — this route doesn't assume a
+    // format (PCM, MP3, or otherwise); lib/tts/elevenlabs.ts owns that.
+    "Content-Type": result.contentType,
+    // Provider-neutral format identifier (e.g. "mp3"), replacing the old
+    // PCM-specific X-Audio-Sample-Rate/Channels/Bit-Depth headers — those
+    // described raw PCM and are meaningless now that the locked format is a
+    // containerised MP3 (CLAUDE.md -> Stack).
+    "X-Audio-Format": result.format,
     "Cache-Control": "no-store",
   });
 

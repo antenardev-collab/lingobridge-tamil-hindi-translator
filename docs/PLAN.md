@@ -978,6 +978,36 @@ being translated mid-negotiation, and makes one-word turns unambiguous.
 Enrollment falls out of slices 1–4 for free. The `speaker` field in
 ground-truth.json exists to test cross-voice routing here.
 
+**Gender selection happens at voice registration, not automatically.** In the
+native Android app, gender is chosen at registration time, when the user
+records their voice for enrollment. The app may show an inferred gender
+alongside the recording as a hint, but the control is a dropdown the user can
+override — the inference is never load-bearing on its own. **Reasoning: TTS
+voice gender must follow the speaker, not the translation direction.** A
+wrong language is confusing and recoverable — the listener can ask again; a
+wrong gender is personal and spoken aloud, every turn, in front of both
+parties. This is a **consequence decision, not an accuracy claim** — it
+doesn't depend on how good gender inference turns out to be (see the next
+item).
+
+**Neither language nor gender auto-detection accuracy has ever been
+measured.** Locked decision 1 (CLAUDE.md) rejects language auto-detection on
+interaction-design grounds — split-screen tap eliminates misdetection on
+short utterances and code-mixed speech by never guessing in the first place.
+The same reasoning was extended to gender above (a registration-time choice,
+not inference). **Record explicitly: decision 1 was an up-front
+interaction-design choice, not an empirical result** — it was never tested
+against a measured detection-accuracy baseline for either signal, because it
+doesn't need one to be correct. An accuracy experiment (language and gender
+inference from the raw audio signal) is still owed, for its own sake,
+independent of whether either decision changes as a result. **Decision 1 has
+independent justification regardless of what that experiment finds:**
+split-screen tap also provides turn-taking, mic ownership, and the Slice 3
+ownership-token fix (`CaptureEngine`, above) that prevents a simultaneous
+hold on both halves from sending one speaker's audio under the other's
+`sourceLang` — properties a content-based detector would have to solve
+separately, not side effects of getting language detection right.
+
 ---
 
 ## Beyond the POC (native rebuild / beta) — NOT POC work, deferred deliberately
@@ -1019,6 +1049,21 @@ ground-truth.json exists to test cross-voice routing here.
   revalidation debt above.
 - Missing clip types: proper names (people, places), and clips with heavy
   background noise. Add when convenient — not blocking.
+- **Idea, not yet scheduled — speaker mood carried to the output voice.**
+  Detect the speaker's mood (conversational, angry, sad, excited) and
+  reproduce it on the listener's side, defaulting to conversational when
+  detection fails. **Deliberately a low-investment experiment:** implement,
+  judge by ear, and if it isn't good, remove it and fall back to a fixed
+  conversational style — not to be streamlined or heavily tested before the
+  app is live.
+  - **Constraint: `eleven_flash_v2_5` has no emotion parameter.** Audio tags
+    belong to Eleven v3, which is alpha and not real-time — not usable here.
+    On Flash, emotional delivery is inferred from the text itself
+    (punctuation, phrasing). **The real dependency is therefore the
+    translate leg preserving emotional shape in its output text**
+    (exclamation marks, question marks, phrasing) — not a TTS setting. If
+    Gemini flattens the emotion in translation, no TTS configuration
+    recovers it downstream.
 - **Parked for 4d — Vercel plan upgrade.** Investigate whether any
   cold-start controls are gated behind paid Vercel tiers. Frame the question
   precisely: warm-instance behaviour is largely a Fluid compute feature,

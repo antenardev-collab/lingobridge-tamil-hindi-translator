@@ -20,6 +20,14 @@
  */
 export type TtsTargetLang = "ta" | "hi";
 
+/**
+ * Voice gender for synthesis. Follows the SPEAKER, not the translation
+ * direction — see the `gender` parameter comment on synthesiseSpeech below
+ * for the full reasoning and docs/PLAN.md -> Slice 6 for the source
+ * decision.
+ */
+export type TtsVoiceGender = "male" | "female";
+
 // Locked model. ElevenLabs' own sample code defaults to
 // eleven_multilingual_v2 — slower and twice the price. Never use it here;
 // model_id must always be set explicitly to this constant.
@@ -27,26 +35,52 @@ const MODEL_ID = "eleven_flash_v2_5";
 
 // Voice Library ("professional" category) voices — require a paid
 // ElevenLabs plan for API access (account is on Starter; see CLAUDE.md ->
-// Stack). Keyed by TtsTargetLang, the OUTPUT language of synthesis.
-const VOICE_IDS: Record<TtsTargetLang, string> = {
-  ta: "wLIQpmGi7jT7aiEmDsE3", // Janani
-  hi: "35h4XgJYQYdHtGbOCg7x", // Rohit
+// Stack). Keyed by [TtsTargetLang][TtsVoiceGender]: voice gender must be a
+// function of the SPEAKER, not of translation direction, so a single
+// voice-per-language table (the shape this replaced) is wrong by
+// construction — it made gender a side effect of which way the audio was
+// going, not who was speaking.
+const VOICE_IDS: Record<TtsTargetLang, Record<TtsVoiceGender, string>> = {
+  ta: {
+    female: "wLIQpmGi7jT7aiEmDsE3", // Janani
+    male: "NsQE1nARp8lz1QelRCh9", // Rajan
+  },
+  hi: {
+    female: "gHu9GtaHOXcSqFTK06ux", // Anjali
+    male: "35h4XgJYQYdHtGbOCg7x", // Rohit
+  },
 };
 
-const OUTPUT_FORMAT = "pcm_24000";
-const PCM_SAMPLE_RATE = 24000;
-const PCM_CHANNELS = 1;
-const PCM_BIT_DEPTH = 16;
+// Output format is MP3, not PCM — PCM was the original choice, made for a
+// chunk-scheduled playback path, and was rejected on measurement (see
+// docs/PLAN.md -> Slice 4, "Client playback format": chunking could save at
+// most 15-245ms server-side while PCM ran 3x-12x the payload of MP3 on the
+// dominant, noisiest leg). Client playback now fetches the complete response
+// and plays it, so the smaller MP3 payload is strictly better with no
+// latency downside.
+const OUTPUT_FORMAT = "mp3_44100_128";
+const CONTENT_TYPE = "audio/mpeg";
+const FORMAT_ID = "mp3";
 
 const BASE = "https://api.elevenlabs.io/v1/text-to-speech";
 
-/** Streamed PCM audio, ready to relay to the caller unbuffered. */
+/**
+ * Streamed audio, ready to relay to the caller unbuffered. Deliberately
+ * format-agnostic: `contentType` is the exact value a caller should set as
+ * an HTTP Content-Type header, and `format` is a short provider-neutral
+ * identifier (e.g. "mp3") a caller can branch or log on without parsing
+ * `contentType`. This replaces the previous PCM-specific
+ * sampleRate/channels/bitDepth fields, which were meaningless for a
+ * containerised format like MP3 and forced every caller to assume raw PCM.
+ * A future provider returning PCM describes it through these SAME two
+ * fields (e.g. contentType: "audio/L16;rate=24000", format: "pcm16") — the
+ * union stays provider-neutral either way.
+ */
 export interface TtsSuccess {
   ok: true;
   audio: ReadableStream<Uint8Array>;
-  sampleRate: number;
-  channels: number;
-  bitDepth: number;
+  contentType: string;
+  format: string;
   status: number;
 }
 
@@ -72,10 +106,24 @@ export type TtsResult = TtsSuccess | TtsFailure;
  * no retries, no backoff — that belongs to the caller. Returns the response
  * body stream directly; never buffers it (no arrayBuffer()), so the caller
  * gets the real streaming benefit.
+ *
+ * `gender` is REQUIRED, deliberately with no default: gender follows the
+ * SPEAKER, not the translation direction (a wrong language is confusing and
+ * recoverable; a wrong gender is personal and spoken aloud), and it is
+ * selected at speaker setup, not inferred from the audio signal — see
+ * docs/PLAN.md -> Slice 6. Omitting a default here means a gender-blind call
+ * site is a COMPILE error, not a silent coin flip. The setup UI where a
+ * speaker actually chooses their gender is Slice 5 and doesn't exist yet;
+ * until it does, callers must still pass an explicit value (the route layer
+ * owns whatever placeholder default is needed meanwhile — see
+ * app/api/tts/route.ts). The per-language/per-gender VOICE_IDS table above
+ * is the PERMANENT fallback path for any speaker without a cloned voice, not
+ * a temporary measure to be removed once cloning ships.
  */
 export async function synthesiseSpeech(
   text: string,
   targetLang: TtsTargetLang,
+  gender: TtsVoiceGender,
 ): Promise<TtsResult> {
   // Empty/whitespace-only input never reaches the network. Returning an
   // empty audio stream would degrade toward silence — the project's
@@ -100,7 +148,7 @@ export async function synthesiseSpeech(
     };
   }
 
-  const voiceId = VOICE_IDS[targetLang];
+  const voiceId = VOICE_IDS[targetLang][gender];
   const endpoint = `${BASE}/${voiceId}/stream?output_format=${OUTPUT_FORMAT}`;
   const body = { text, model_id: MODEL_ID, language_code: targetLang };
 
@@ -137,9 +185,8 @@ export async function synthesiseSpeech(
   return {
     ok: true,
     audio: res.body,
-    sampleRate: PCM_SAMPLE_RATE,
-    channels: PCM_CHANNELS,
-    bitDepth: PCM_BIT_DEPTH,
+    contentType: CONTENT_TYPE,
+    format: FORMAT_ID,
     status: res.status,
   };
 }
