@@ -154,6 +154,11 @@ export class CaptureEngine {
   private startedAt = 0;
   private onFirstFrame: (() => void) | null = null;
 
+  // Input gate — see mute()/unmute() below. Independent of `recording`:
+  // checked first in the worklet handler so no sample is ever retained
+  // while engaged, regardless of turn state.
+  private muted = false;
+
   // Ownership token for the active turn. startRecording hands one out; only a
   // stopRecording carrying the matching token may end and claim the audio. This
   // is what makes simultaneous holds safe: the second (non-owning) side gets null
@@ -253,9 +258,10 @@ export class CaptureEngine {
       });
       this.node = node;
       node.port.onmessage = (e: MessageEvent) => {
-        // Continuous frames. Drop unless a turn is recording — retain nothing
-        // when idle, so discarded frames cannot accumulate.
-        if (!this.recording) return;
+        // Continuous frames. Drop while muted (input gate, see mute() below)
+        // or unless a turn is recording — retain nothing when idle or gated,
+        // so discarded frames cannot accumulate.
+        if (this.muted || !this.recording) return;
         this.chunks.push(e.data as Float32Array);
         if (this.onFirstFrame) {
           const cb = this.onFirstFrame;
@@ -277,6 +283,55 @@ export class CaptureEngine {
   /** True while a turn is being captured. */
   isRecording(): boolean {
     return this.recording;
+  }
+
+  /**
+   * Engage the input gate: from this call until unmute(), every sample the
+   * worklet emits is discarded (see the onmessage handler in acquire()).
+   * Exists to satisfy locked architecture decision 2 (CLAUDE.md) — the mic
+   * is hard-gated for the full duration of TTS playback. Sample-level
+   * gating (drop frames, leave the graph running) was chosen over
+   * stopping/tearing down capture specifically to preserve the
+   * persistent-engine fix described at the top of this file: reacquiring
+   * the MediaStream/AudioContext/worklet per gate would reintroduce the
+   * ~200ms idle-wake front-loss Slice 3 eliminated. Safe to call at any
+   * time, including with no capture in progress; calling it twice is
+   * harmless (idempotent).
+   *
+   * If a turn is actively being captured when this is called, that turn's
+   * audio is discarded outright rather than delivered as a partial turn on
+   * the next stopRecording() (which will see no active turn and return
+   * null, the same as a release during warm-up). A half-captured turn is
+   * worse than no turn: the duration/energy gates in stopRecording() would
+   * judge a truncated capture on incomplete evidence — a genuine utterance
+   * cut short could misjudge as too short or too quiet, and a partial
+   * translation sent to the model is a worse failure than silently
+   * dropping the turn.
+   *
+   * This method only provides the mechanism — no playback code, timer, or
+   * TTS reference belongs here. Driving mute()/unmute() from actual
+   * playback is a later step.
+   */
+  mute(): void {
+    if (this.muted) return;
+    this.muted = true;
+    if (this.recording) {
+      this.recording = false;
+      this.activeToken = null;
+      this.onFirstFrame = null;
+      this.chunks = [];
+      this.startedAt = 0;
+    }
+  }
+
+  /** Release the input gate — frames accumulate normally again from the next one. Idempotent. */
+  unmute(): void {
+    this.muted = false;
+  }
+
+  /** True while the input gate (mute()) is engaged. Debug/observation only. */
+  isMuted(): boolean {
+    return this.muted;
   }
 
   /**

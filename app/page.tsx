@@ -5,6 +5,28 @@ import HoldToTalk from "@/components/HoldToTalk";
 import { CaptureEngine, type GatedTurn, type Recording } from "@/lib/recorder";
 import { strings, micErrorMessages, forSide, type MicErrorKind } from "@/lib/i18n";
 import type { CapturedTurn, ServerDebug, Side, Turn, TurnTiming } from "@/lib/types";
+import {
+  speak,
+  type PlaybackFailure,
+  type PlaybackResult,
+  type TargetLang,
+  type VoiceGender,
+} from "@/lib/tts/playback";
+
+// TODO(5): hardcoded until the Slice 5 setup UI supplies a gender per
+// speaker. Gender follows the SPEAKER, not the translation direction (see
+// lib/tts/elevenlabs.ts) — never inferred from anything; this is a
+// placeholder, not an inference, and must be removed once Slice 5 lands.
+const VOICE_GENDER: VoiceGender = "female";
+
+/** Mirrors the repo's `HTTP status · error · detail` error style (see handleCapture's errorLabel) for a TTS-leg failure. */
+function ttsFailureLabel(f: PlaybackFailure): string {
+  const parts: string[] = [f.reason];
+  if (f.status !== null) parts.push(`HTTP ${f.status}`);
+  if (f.error) parts.push(f.error);
+  if (f.detail) parts.push(f.detail);
+  return parts.join(" · ");
+}
 
 function makeId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -62,8 +84,14 @@ function transportMs(t: TurnTiming): number | null {
  * Analysis-ready export for one turn: client deltas (never raw performance.now
  * marks, which are meaningless out of context), payload/idle context, the server
  * decomposition, and the derived transport. Copied out as JSON for pasting.
+ *
+ * `ttsResult` is the settled speak() outcome for this turn, if any (component
+ * state in Home, keyed by turn id — a gated turn never has one). Its four
+ * timing marks (requestSentMs/responseReadMs/playCalledMs/gateReleasedMs) are
+ * ALL client-clock (performance.now()) — same rule as the translate-leg
+ * marks above: never combined with any server-reported duration.
  */
-function exportTurn(t: Turn) {
+function exportTurn(t: Turn, ttsResult?: PlaybackResult) {
   if (t.status === "gated") {
     // A gate trip never became a turn — export just the evidence whichever
     // check (duration or energy) acted on, not the request/timing shape of a
@@ -108,6 +136,23 @@ function exportTurn(t: Turn) {
       : null,
     server: tm?.server ?? null,
     transportMs: tm ? transportMs(tm) : null,
+    tts: !ttsResult
+      ? null
+      : ttsResult.ok
+        ? {
+            ok: true,
+            requestSentMs: Math.round(ttsResult.requestSentMs),
+            responseReadMs: Math.round(ttsResult.responseReadMs),
+            playCalledMs: Math.round(ttsResult.playCalledMs),
+            gateReleasedMs: Math.round(ttsResult.gateReleasedMs),
+          }
+        : {
+            ok: false,
+            reason: ttsResult.reason,
+            status: ttsResult.status,
+            error: ttsResult.error,
+            detail: ttsResult.detail,
+          },
   };
 }
 
@@ -117,6 +162,16 @@ export default function Home() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [micError, setMicError] = useState<MicErrorKind | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Id of the turn currently being spoken, or null when nothing is playing.
+  // Doubles as the busy flag the split-screen buttons gate on below — the
+  // mic is a single shared CaptureEngine, so at most one turn ever speaks
+  // at a time.
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  // Settled speak() outcome per turn id, for the debug area and the
+  // copy-timings export (exportTurn). Local UI/debug state only — not part
+  // of the shared Turn/CapturedTurn shape (lib/types.ts).
+  const [ttsResults, setTtsResults] = useState<Record<string, PlaybackResult>>({});
 
   // Release mark of the previous turn (client clock), for firstTurn + the idle
   // gap. Null until the first release. A ref, not state — it must not re-render.
@@ -257,11 +312,39 @@ export default function Home() {
       const original = data && typeof data.original === "string" ? data.original : "";
       const translation = data && typeof data.translation === "string" ? data.translation : "";
       updateTurn(id, { status: "done", original, translation, requestMs, timing });
+      // Speak the translation now that it's rendered (locked decision 2).
+      // translation can legitimately be empty (a malformed-but-200 response);
+      // there's nothing to synthesise in that case, so don't bother speak().
+      if (translation.trim()) void speakTranslation(id, translation, side);
     } catch {
       timing.complete = performance.now();
       const requestMs = timing.encoded ? Math.round(timing.complete - timing.encoded) : undefined;
       updateTurn(id, { status: "error", errorLabel: "network", requestMs, timing });
     }
+  }
+
+  // Fires after a turn's translation is on screen. Not awaited by the caller
+  // (handleCapture already treats each turn's request as independent/
+  // parallel; TTS is the same) — updates ttsResults/speakingId as speak()
+  // settles instead. On failure: no alert(), no retry — the turn is over.
+  // The translated text stays on screen exactly as already rendered above,
+  // which is a degraded-but-usable outcome; the project's stated fallback
+  // preference is to degrade toward ugly rather than toward nothing (see
+  // lib/tts/elevenlabs.ts's word-slur finding in docs/PLAN.md for the same
+  // principle applied elsewhere on this leg).
+  async function speakTranslation(id: string, translation: string, sourceLang: Side) {
+    // Target is the OPPOSITE of sourceLang: a Tamil source produces Hindi
+    // speech and vice versa. Derived explicitly here, never by reusing
+    // `sourceLang`/`Side` as-is — this exact speaker-side/output-language
+    // inversion is what TargetLang (lib/tts/playback.ts) and TtsTargetLang
+    // (lib/tts/elevenlabs.ts) were deliberately kept separate FROM `Side`
+    // to prevent a caller from getting backwards by construction.
+    const targetLang: TargetLang = sourceLang === "ta" ? "hi" : "ta";
+
+    setSpeakingId(id);
+    const result = await speak(translation, targetLang, VOICE_GENDER, engine);
+    setSpeakingId(null);
+    setTtsResults((prev) => ({ ...prev, [id]: result }));
   }
 
   // Copy all accumulated turn timing as JSON for pasting out (Slice 4a). Debug
@@ -270,7 +353,7 @@ export default function Home() {
     const payload = {
       exportedAt: new Date().toISOString(),
       userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
-      turns: [...turns].reverse().map(exportTurn),
+      turns: [...turns].reverse().map((t) => exportTurn(t, ttsResults[t.id])),
     };
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
@@ -325,20 +408,42 @@ export default function Home() {
     return lines;
   }
 
+  // The mic is ONE shared CaptureEngine, hard-gated (locked decision 2) for
+  // the full duration of TTS playback — see lib/tts/playback.ts's speak().
+  // A press during that window would silently produce a gated (duration-trip)
+  // turn rather than a real capture (the muted engine discards every sample),
+  // which would look broken to the user. Both halves share the same mic AND
+  // the same `playing` flag: one speaker's completed turn can trigger
+  // playback (speakTranslation, above) at any moment, including while the
+  // OTHER speaker is mid-hold on their own button — so this gate can flip
+  // true out from under an in-progress gesture. That's exactly why it's
+  // passed as a real `disabled` prop to HoldToTalk (checked at pointerdown
+  // to block a NEW hold, and deliberately NOT re-checked on pointerup — see
+  // HoldToTalk's end()) rather than done with a pointer-events wrapper,
+  // which would leave a hold already in progress stuck believing it's
+  // still active.
+  const playing = speakingId !== null;
+
   // Every turn shows on BOTH halves: the speaker's side shows `original`, the
   // listener's side shows `translation` — each already in that side's script.
   // Debug text only (locked decision 6); the capture debug row is speaker-side.
   const half = (side: Side) => (
     <section className={`half ${side}`}>
       <h1 className="half-heading">{strings.heading[side]}</h1>
-      <HoldToTalk
-        side={side}
-        engine={engine}
-        onCapture={(rec, releasedAt) => handleCapture(side, rec, releasedAt)}
-        onGated={(gated) => handleGated(side, gated)}
-        onError={setMicError}
-        onStart={() => setMicError(null)}
-      />
+      {/* Opacity only — the actual gate is HoldToTalk's own `disabled` prop
+          below, not pointer-events on this wrapper (see the comment above
+          `playing`). */}
+      <div style={playing ? { opacity: 0.5 } : undefined}>
+        <HoldToTalk
+          side={side}
+          engine={engine}
+          onCapture={(rec, releasedAt) => handleCapture(side, rec, releasedAt)}
+          onGated={(gated) => handleGated(side, gated)}
+          onError={setMicError}
+          onStart={() => setMicError(null)}
+          disabled={playing}
+        />
+      </div>
       <div className="turns" aria-live="polite">
         {turns.length === 0 ? (
           <div className="turn-empty">{forSide(strings.noTurnsYet, side)}</div>
@@ -346,6 +451,9 @@ export default function Home() {
           turns.map((t) => {
             const isSpeaker = t.side === side;
             const rate = impliedRate(t);
+            // Only a completed turn ever has one; ttsResults isn't touched
+            // for "loading"/"error"/"gated" ids.
+            const ttsResult = t.status === "done" ? ttsResults[t.id] : undefined;
             const text =
               t.status === "loading"
                 ? "…"
@@ -385,6 +493,13 @@ export default function Home() {
                               {line}
                             </div>
                           ))}
+                        {/* TTS-leg failure only — success carries no on-screen
+                            line of its own (decision 6: minimal debug text);
+                            its four marks still reach the copy-timings export
+                            via exportTurn's `tts` field above. */}
+                        {ttsResult && !ttsResult.ok && (
+                          <div className="turn-timing">⚠ tts: {ttsFailureLabel(ttsResult)}</div>
+                        )}
                       </>
                     )}
                   </div>

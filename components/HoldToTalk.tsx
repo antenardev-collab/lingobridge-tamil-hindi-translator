@@ -16,6 +16,12 @@ interface HoldToTalkProps {
   onError: (kind: MicErrorKind) => void;
   /** Called when a recording starts so the parent can clear a stale error. */
   onStart?: () => void;
+  /**
+   * Blocks a NEW hold from starting — checked at pointerdown, before
+   * anything else. Does not affect a hold already in progress: see end()'s
+   * comment for why a pointer-up is never refused. Defaults to false.
+   */
+  disabled?: boolean;
 }
 
 /**
@@ -27,7 +33,15 @@ interface HoldToTalkProps {
  * no pointerleave, which with capture active either won't fire on touch or
  * would misfire mid-drag on a desktop mouse and cut the recording early.
  */
-export default function HoldToTalk({ side, engine, onCapture, onGated, onError, onStart }: HoldToTalkProps) {
+export default function HoldToTalk({
+  side,
+  engine,
+  onCapture,
+  onGated,
+  onError,
+  onStart,
+  disabled = false,
+}: HoldToTalkProps) {
   const [recording, setRecording] = useState(false);
   // Guards against a stop firing before warm-up resolves, or two stops racing.
   const activeRef = useRef(false);
@@ -36,6 +50,9 @@ export default function HoldToTalk({ side, engine, onCapture, onGated, onError, 
   const tokenRef = useRef<number | null>(null);
 
   async function begin(e: React.PointerEvent<HTMLButtonElement>) {
+    // Refuse a NEW hold outright while disabled (e.g. mid-TTS-playback, the
+    // mic gate — locked decision 2) — checked before anything else starts.
+    if (disabled) return;
     if (activeRef.current) return;
     activeRef.current = true;
     try {
@@ -70,6 +87,15 @@ export default function HoldToTalk({ side, engine, onCapture, onGated, onError, 
   }
 
   async function end() {
+    // Deliberately NOT gated on `disabled`: a hold already in progress must
+    // still be able to end even if `disabled` flips true mid-hold (both
+    // halves share one CaptureEngine, so the OTHER side's turn finishing
+    // and triggering playback can happen while this side is still held
+    // down). Refusing this pointer-up would strand the component believing
+    // a hold is still active — worse than allowing a turn that the mic gate
+    // will discard anyway (CaptureEngine.mute() drops every sample once
+    // engaged, so ending here just produces a harmless gated "duration"
+    // trip, not real audio sent anywhere).
     if (!activeRef.current) return;
     activeRef.current = false;
     setRecording(false);
@@ -97,11 +123,12 @@ export default function HoldToTalk({ side, engine, onCapture, onGated, onError, 
   return (
     <button
       type="button"
-      className={`hold-btn${recording ? " recording" : ""}`}
+      className={`hold-btn${recording ? " recording" : ""}${disabled ? " disabled" : ""}`}
       onPointerDown={begin}
       onPointerUp={end}
       onPointerCancel={end}
       aria-pressed={recording}
+      aria-disabled={disabled}
     >
       {forSide(recording ? strings.recording : strings.holdToTalk, side)}
     </button>
