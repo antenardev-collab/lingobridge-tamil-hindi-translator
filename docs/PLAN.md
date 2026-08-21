@@ -759,6 +759,23 @@ cold start that Vercel's bundling doesn't cover, revisit the split.
     - **Native note.** The gate depends on browser AGC and noise-suppression
       behaviour. Android native gives different, more direct control over
       both, so `-42` does not transfer as-is to a native rebuild.
+    - **Native rebuild note — audio source selection, not an AGC on/off
+      switch.** On Android the meaningful choice is the audio source:
+      `VOICE_COMMUNICATION` applies aggressive echo cancellation, noise
+      suppression and gain control (closest to current browser behaviour);
+      `VOICE_RECOGNITION` is purpose-built for speech-to-text with minimal
+      processing; `UNPROCESSED` is rawest but only available on devices
+      that declare support, and requires owning gain staging entirely.
+      There is also an `AutomaticGainControl` effect that can be queried
+      and disabled, but it only affects the software effect — gain applied
+      in the device audio DSP sits below it. **Lean: `VOICE_RECOGNITION`
+      rather than raw** — some normalisation genuinely helps a counter-top
+      deployment with two speakers at different distances, and the current
+      problem is AGC tuned for a phone call, not AGC in principle. Two
+      caveats: OEM behaviour varies significantly, so this needs measuring
+      on target devices; and these API details were stated from knowledge
+      and have not been verified against current Android documentation —
+      confirm before building on them.
     - **The threshold is provisional.** Confirmed against real presses on
       both devices with a wide margin, but the calibration/verification
       discrepancy above means the phone noise ceiling itself isn't fully
@@ -776,8 +793,32 @@ cold start that Vercel's bundling doesn't cover, revisit the split.
       `exportTurn`, both bullets above) until 4d confirms the threshold
       holds in real use — it's the only way a wrong threshold would be
       diagnosable rather than guessed at.
-- **4c — TTS route only** (`/api/tts`): build the route, deploy, measure
-  end-to-end. **NARROWED SCOPE (2026-08-20).** ElevenLabs streaming
+    - **Capture clipping — new finding (2026-08-21), investigate in 4d,
+      coupled to the energy-gate confirmation above, not separable from
+      it.** Every one of the seven device turns (see "Device verification",
+      Slice 4, below) showed `peakDbfs: 0` with `peakLinear` above 1.0 (up
+      to 1.000881), and RMS between −11 and −15 dBFS. The captured audio is
+      clipping at digital full scale on every turn. Almost certainly
+      browser AGC, which Slice 3 left at browser default.
+      - **Not yet known to be a defect.** All seven translations came back
+        correct, including the two-time self-correction case (see "Device
+        verification"). Clipping is a signal-quality issue that may or may
+        not be an output-quality issue.
+      - **Coupled to the energy-gate confirmation, not separable.**
+        `MIN_TURN_RMS_DBFS = -42` (above) was calibrated with AGC active.
+        Reducing gain would make quiet speech quieter and could cause
+        currently-passing turns (இல்ல, சரி, ஆமா) to be silently discarded.
+        The two must be measured together in 4d, not separately.
+- **4c — TTS route only** (`/api/tts`) ✅ COMPLETE (2026-08-21). Delivered:
+  `/api/tts` on ElevenLabs `eleven_flash_v2_5`, MP3 output, a gender-keyed
+  voice table, `lib/tts/elevenlabs.ts` as the sole provider boundary,
+  `lib/tts/playback.ts`, `CaptureEngine.mute()`/`unmute()`, a `disabled`
+  prop on `HoldToTalk`, and the turn flow wired in `app/page.tsx`. Verified
+  on a real Android device (Chrome 151, Android 10) — see "Device
+  verification", below. The scope note below predates the MP3
+  fetch-complete-then-play lock ("Client playback format", above) — its
+  "playback on the first chunk" line is superseded; kept as the original
+  planning record. **NARROWED SCOPE (2026-08-20).** ElevenLabs streaming
   (`eleven_flash_v2_5`), playback on the first chunk, per-side fixed voice
   (Janani/Rohit — see CLAUDE.md → Stack), mic hard-gate spanning the full
   duration of playback (decision 2 — see the CLAUDE.md note under decision 2
@@ -945,6 +986,56 @@ each ≈ **2.6s to first audio**, from Chennai on IAD1, before any client
 playback. This exceeds locked decision 3's under-2s target; TTS is the
 smallest of the three terms. **No amendment to decision 3 is proposed here —
 that decision remains parked for 4d.**
+
+### Device verification (2026-08-21)
+
+First real-device end-to-end test of the closed 4c loop — Android, Chrome
+151, Android 10. These are the first real-device measurements; where they
+conflict with a laptop/probe figure, treat the device numbers as
+authoritative.
+
+- **Autoplay survives the gesture.** `play()` succeeded after two network
+  round trips following the press-and-hold (translate, then TTS). This was
+  flagged as a risk earlier in this slice and did not materialise.
+- **Decision 2 holds in a real room.** Echo test passed: speaking
+  immediately after playback produced no trace of the phone's own output in
+  the next transcription. Sample-gating (`CaptureEngine.mute()`) is
+  sufficient — no capture teardown required, confirming the approach chosen
+  over stopping capture (CLAUDE.md → decision 2).
+- **Both directions correct**, with the target language properly derived as
+  the inverse of `sourceLang` (`app/page.tsx`'s `speakTranslation`).
+- **Numbers survived a hard case unprompted.** A Hindi self-correction,
+  "8:00 बजे ना, 7:00 बजे", translated to Tamil with both times preserved
+  exactly.
+
+### Real-device latency — the probe estimate was optimistic (2026-08-21)
+
+The previously recorded ~2.6s end-to-end estimate (above) was built on probe
+data using `ta-11.wav` and `hi-11.wav` — the two shortest clips in the
+corpus (single-word acknowledgements). Real conversational turns of
+1.4–5.4 seconds produce very different figures; this supersedes that
+estimate as the authoritative number, not an addition to it.
+
+- **Probe `requestToCompleteMs` on the translate leg:** ~1050ms median
+  (region re-run, above — same short-clip limitation).
+- **Real device, seven turns:** 3085, 2706, 2927, 6030, 1727, 1158, 5229ms.
+  Median ~2927ms.
+- **Release to hearing speech, actual:** shortest 3.3s, median ~4.3s, worst
+  7.7s — against locked decision 3's under-2s target.
+- **Roughly 80% of the wait is the translate leg.** The TTS leg costs
+  ~450–880ms from press to `play()`.
+- **Lesson, explicit: probe clips must be representative of real utterance
+  lengths.** Gemini's time scales with input, and the shortest clips in the
+  corpus flattered the result. Any future latency probe should use
+  mid-length clips, not the shortest ones available.
+- **This is input to Slice 4d's decision on the proposed decision-3
+  amendment. No amendment is proposed here.**
+- **Timing-mark ambiguity in `lib/tts/playback.ts` — 4d.** `requestSentMs`
+  reports ~450–880ms, which is implausible as "time until `fetch` was
+  called" (that should be near-instant). It likely marks response headers
+  received, making the `responseReadMs` gap the body read instead. The mark
+  names may not describe what they actually measure. **Verify and rename in
+  4d before these numbers are used for any decision.**
 
 ---
 
