@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { DEFAULT_PIPELINE, isPipelineId } from "@/lib/models";
 import { runTranslate, TranslateValidationError } from "@/lib/translate";
 import type { ServerDebug } from "@/lib/types";
-import type { PipelineTiming } from "@/lib/translate/types";
+import type { PipelineTiming, ProviderTrace } from "@/lib/translate/types";
 
 /**
  * Slice 4a cold-start detector. Module scope, so it survives across invocations
@@ -25,6 +25,7 @@ function buildDebug(
   execRegion: string | null,
   edgeTrace: string | null,
   timing: PipelineTiming | null,
+  trace: ProviderTrace | undefined,
 ): ServerDebug {
   const round = (ms: number) => Math.round(ms);
   const entryToRequestMs = timing ? round(timing.requestSent - entry) : 0;
@@ -33,7 +34,7 @@ function buildDebug(
   // Measured directly as entry→exit, NOT summed from the parts, so residualMs can
   // surface time no named interval captured (plus per-field rounding).
   const serverTotalMs = round(exit - entry);
-  return {
+  const debug: ServerDebug = {
     coldStart,
     execRegion,
     edgeTrace,
@@ -46,6 +47,38 @@ function buildDebug(
     serverTotalMs,
     residualMs: serverTotalMs - (entryToRequestMs + requestToCompleteMs + completeToExitMs),
   };
+
+  // providerTrace is OMITTED (not set to a zeroed object) when there's no
+  // timing or no trace — e.g. the error path, or a pipeline that doesn't
+  // populate one. An absent trace and an all-zero trace must not look the same.
+  if (timing && trace) {
+    const serialiseMs = round(trace.payloadReady - timing.requestSent);
+    const preFetchMs = round(trace.fetchStart - trace.payloadReady);
+    const fetchToHeadersMs = round(trace.headers - trace.fetchStart);
+    const bodyDownloadMs = round(trace.bodyRead - trace.headers);
+    const parseMs = round(trace.parsed - trace.bodyRead);
+    debug.providerTrace = {
+      serialiseMs,
+      preFetchMs,
+      fetchToHeadersMs,
+      bodyDownloadMs,
+      parseMs,
+      traceResidualMs:
+        requestToCompleteMs - (serialiseMs + preFetchMs + fetchToHeadersMs + bodyDownloadMs + parseMs),
+      requestBytes: trace.requestBytes,
+      responseBytes: trace.responseBytes,
+      callIndexInProcess: trace.callIndexInProcess,
+      finishReason: trace.finishReason,
+      modelVersion: trace.modelVersion,
+      responseId: trace.responseId,
+      modelStage: trace.modelStage,
+      serviceTier: trace.serviceTier,
+      totalTokens: trace.totalTokens,
+      thoughtsTokens: trace.thoughtsTokens,
+    };
+  }
+
+  return debug;
 }
 
 /**
@@ -146,13 +179,13 @@ export async function POST(req: Request) {
       pipeline,
       model: out.model,
       usage: out.usage,
-      debug: buildDebug(entry, exit, coldStart, execRegion, edgeTrace, out.timing),
+      debug: buildDebug(entry, exit, coldStart, execRegion, edgeTrace, out.timing, out.trace),
     });
   } catch (err) {
     const exit = performance.now();
     // No provider marks on the error path — report just the entry→exit envelope
     // so a slow *failure* is still measurable.
-    const debug = buildDebug(entry, exit, coldStart, execRegion, edgeTrace, null);
+    const debug = buildDebug(entry, exit, coldStart, execRegion, edgeTrace, null, undefined);
     if (err instanceof TranslateValidationError) {
       // Already logged with raw text inside runTranslate; surface a clean error.
       return NextResponse.json(

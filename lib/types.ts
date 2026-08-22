@@ -64,6 +64,70 @@ export interface ServerDebug {
    * per-field rounding). A non-trivial value means a mark is missing.
    */
   residualMs: number;
+  /**
+   * Slice 4a+ fine-grained decomposition of requestToCompleteMs, present only
+   * when the pipeline populated a ProviderTrace (gemini-direct today).
+   * Deliberately OPTIONAL rather than defaulted to a zeroed object: an absent
+   * trace (no pipeline support, or the call errored before returning marks)
+   * must not look the same as a trace whose deltas happen to be zero.
+   */
+  providerTrace?: ServerProviderTrace;
+}
+
+/**
+ * Rounded millisecond deltas from one ProviderTrace, plus its passthrough
+ * response metadata. All deltas are on the SAME server clock as the rest of
+ * ServerDebug (never mixed with the client's clock).
+ */
+export interface ServerProviderTrace {
+  /**
+   * payloadReady − requestSent: our own cost of building the request body
+   * string. Previously this time was counted as provider latency (folded
+   * into requestToCompleteMs) — this pulls it out as a named cost.
+   */
+  serialiseMs: number;
+  /**
+   * fetchStart − payloadReady. Expected near zero; a non-trivial value means
+   * something unaccounted sits between serialisation and the fetch call.
+   */
+  preFetchMs: number;
+  /**
+   * headers − fetchStart. Covers upload + queueing + inference +
+   * time-to-first-response-byte together — NOT separable further from inside
+   * the function (this is a non-streaming call; there is no earlier mark to
+   * split it against).
+   */
+  fetchToHeadersMs: number;
+  /** bodyRead − headers: time to read the response body as text. */
+  bodyDownloadMs: number;
+  /** parsed − bodyRead: JSON.parse cost. */
+  parseMs: number;
+  /**
+   * requestToCompleteMs − (serialiseMs + preFetchMs + fetchToHeadersMs +
+   * bodyDownloadMs + parseMs). Mirrors residualMs above: a non-trivial value
+   * means a mark is missing.
+   */
+  traceResidualMs: number;
+  /** Byte length of the serialised request body. */
+  requestBytes: number;
+  /** Byte length of the response body text. */
+  responseBytes: number;
+  /** 1 for the first Gemini call this process instance made, incrementing thereafter. */
+  callIndexInProcess: number;
+  /** candidates[0].finishReason. Null if absent from the response. */
+  finishReason: string | null;
+  /** Gemini's modelVersion field. Null if absent from the response. */
+  modelVersion: string | null;
+  /** Gemini's responseId field. Null if absent from the response. */
+  responseId: string | null;
+  /** modelStatus.modelStage. Null if absent from the response. */
+  modelStage: string | null;
+  /** usageMetadata.serviceTier. Null if absent from the response. */
+  serviceTier: string | null;
+  /** usageMetadata.totalTokenCount. Null means absent — distinct from a real 0. */
+  totalTokens: number | null;
+  /** usageMetadata.thoughtsTokenCount. Null means absent — distinct from a real 0. */
+  thoughtsTokens: number | null;
 }
 
 /**

@@ -52,6 +52,70 @@ export interface TranslateOutput extends TranslateResult {
   raw: string;
   /** Server-clock timing marks around the provider call (Slice 4a). */
   timing: PipelineTiming;
+  /**
+   * Fine-grained trace of this provider call, when the pipeline populates one
+   * (Slice 4a+). Optional so pipelines without a trace (openrouter-single)
+   * stay valid — do not add a required field here.
+   */
+  trace?: ProviderTrace;
+}
+
+/**
+ * Slice 4a+ fine-grained marks + response metadata for one Gemini
+ * generateContent call, on the SAME clock as PipelineTiming
+ * (`performance.now()`, one process). Currently populated only by
+ * gemini-direct; openrouter-single has no equivalent and is unaffected.
+ */
+export interface ProviderTrace {
+  /** Just after the request body string has been built (end of our own serialisation cost). */
+  payloadReady: number;
+  /** Immediately before fetch() is called. */
+  fetchStart: number;
+  /**
+   * Immediately after the fetch promise resolves — i.e. response headers
+   * received. NOT a token TTFT: this is a non-streaming generateContent call,
+   * so Gemini generates the whole reply before opening the HTTP response.
+   * This mark covers upload + queueing + inference + first-response-byte
+   * together, not "first token" — do not read it as one.
+   */
+  headers: number;
+  /** After the response body has been fully read as text. */
+  bodyRead: number;
+  /** After JSON.parse of that text. */
+  parsed: number;
+  /**
+   * Byte length of the serialised request body. Uses Buffer.byteLength, not
+   * .length — the payload is mostly base64 ASCII (fixed-width) but the system
+   * instruction is Tamil/Hindi/English text, which is not.
+   */
+  requestBytes: number;
+  /** Byte length of the response body text. */
+  responseBytes: number;
+  /**
+   * 1 for the first Gemini call this process makes, incrementing thereafter.
+   * Per-process — resets to 1 whenever the Vercel instance is replaced.
+   */
+  callIndexInProcess: number;
+  /** candidates[0].finishReason. Null if absent from the response. */
+  finishReason: string | null;
+  /** Gemini's modelVersion field. Null if absent from the response. */
+  modelVersion: string | null;
+  /** Gemini's responseId field. Null if absent from the response. */
+  responseId: string | null;
+  /** modelStatus.modelStage. Null if absent from the response. */
+  modelStage: string | null;
+  /** usageMetadata.serviceTier. Null if absent from the response. */
+  serviceTier: string | null;
+  /**
+   * usageMetadata.totalTokenCount. Null means the field was absent from the
+   * response — distinct from an actual 0, so this is never defaulted to 0.
+   */
+  totalTokens: number | null;
+  /**
+   * usageMetadata.thoughtsTokenCount. Null means the field was absent from
+   * the response — distinct from an actual 0, so this is never defaulted to 0.
+   */
+  thoughtsTokens: number | null;
 }
 
 export interface TranslatePipeline {
