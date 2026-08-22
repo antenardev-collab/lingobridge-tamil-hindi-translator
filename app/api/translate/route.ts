@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { DEFAULT_PIPELINE, isPipelineId } from "@/lib/models";
 import { runTranslate, TranslateValidationError } from "@/lib/translate";
 import { getWavDurationSec } from "@/lib/wav-duration";
+import { computeServerDeadline, type DeadlineSource } from "@/lib/deadline";
 import type { ServerDebug } from "@/lib/types";
 import type { PipelineTiming, ProviderTrace } from "@/lib/translate/types";
 
@@ -11,25 +12,6 @@ import type { PipelineTiming, ProviderTrace } from "@/lib/translate/types";
  * false thereafter. Read-then-set below so the first response reports `true`.
  */
 let INSTANCE_WARMED = false;
-
-/**
- * Slice 4d deadline model. The Gemini call is linear in speech length: source
- * is the Slice 4d longform probe (docs/PLAN.md → Slice 4d step 1), 32
- * requests, four Tamil clips 1.92–30.59s — least-squares fit
- * requestToCompleteMs ≈ 795ms + 64ms per second of audio. Headroom is FIXED,
- * not proportional to duration: the observed tail overshoots the linear
- * prediction by a roughly constant amount regardless of turn length (a 3.4s
- * clip once overshot by 2813ms; a 30.6s clip by 1973ms).
- */
-const DEADLINE_BASE_MS = 795;
-const DEADLINE_PER_SEC_MS = 64;
-const DEADLINE_HEADROOM_MS = 1500;
-/** Used when duration can't be parsed or is outside the plausible range —
- * degrading toward a long wait is safer than aborting a healthy turn on an
- * unparsed duration. */
-const DEADLINE_FALLBACK_MS = 8000;
-const MIN_PLAUSIBLE_DURATION_SEC = 0.1;
-const MAX_PLAUSIBLE_DURATION_SEC = 120;
 
 /** `err.name === "AbortError"` without assuming AbortError is an `instanceof
  * Error` — Node's fetch implementation rejects with a DOMException, which
@@ -55,7 +37,7 @@ function buildDebug(
   trace: ProviderTrace | undefined,
   audioDurationSec: number | null,
   deadlineMs: number,
-  deadlineSource: "measured" | "fallback",
+  deadlineSource: DeadlineSource,
 ): ServerDebug {
   const round = (ms: number) => Math.round(ms);
   const entryToRequestMs = timing ? round(timing.requestSent - entry) : 0;
@@ -196,21 +178,36 @@ export async function POST(req: Request) {
 
   const audioBase64 = buf.toString("base64");
 
-  // Slice 4d: deadline is computed from the audio itself (lib/wav-duration.ts),
-  // not from a client-supplied number the server cannot verify.
+  // Slice 4d: deadline is computed from the audio itself (lib/wav-duration.ts)
+  // first — never from the client alone, which the server cannot verify.
+  // Deadline arithmetic lives in lib/deadline.ts, shared with the client
+  // backstop, so the two cannot drift apart.
   const audioDurationSec = getWavDurationSec(buf);
+
+  // Slice 4d step 2: three-tier duration resolution. Tier 1 (server's own
+  // parse) is tried first; "measured" keeps its exact original meaning — a
+  // successful, plausible server-side parse — so existing recorded results
+  // stay comparable. Only when tier 1 fails or is implausible do we fall
+  // back to tier 2, the client-supplied `durationSec` FormData hint (a HINT
+  // only — see app/page.tsx), itself only accepted if it's a finite number
+  // inside the same plausibility range computeServerDeadline already
+  // enforces. Tier 3 is the fixed fallback deadline.
+  const durationHintRaw = form.get("durationSec");
+  const durationHintSec =
+    typeof durationHintRaw === "string" && Number.isFinite(Number(durationHintRaw))
+      ? Number(durationHintRaw)
+      : null;
+
+  const measured = computeServerDeadline(audioDurationSec);
   let deadlineMs: number;
-  let deadlineSource: "measured" | "fallback";
-  if (
-    audioDurationSec !== null &&
-    audioDurationSec >= MIN_PLAUSIBLE_DURATION_SEC &&
-    audioDurationSec <= MAX_PLAUSIBLE_DURATION_SEC
-  ) {
-    deadlineMs = DEADLINE_BASE_MS + DEADLINE_PER_SEC_MS * audioDurationSec + DEADLINE_HEADROOM_MS;
+  let deadlineSource: DeadlineSource;
+  if (measured.deadlineSource === "measured") {
+    deadlineMs = measured.deadlineMs;
     deadlineSource = "measured";
   } else {
-    deadlineMs = DEADLINE_FALLBACK_MS;
-    deadlineSource = "fallback";
+    const hinted = computeServerDeadline(durationHintSec);
+    deadlineMs = hinted.deadlineMs;
+    deadlineSource = hinted.deadlineSource === "measured" ? "client-hint" : "fallback";
   }
 
   const controller = new AbortController();

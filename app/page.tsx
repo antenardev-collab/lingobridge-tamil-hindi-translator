@@ -12,6 +12,7 @@ import {
   type TargetLang,
   type VoiceGender,
 } from "@/lib/tts/playback";
+import { computeClientBackstopMs } from "@/lib/deadline";
 
 // TODO(5): hardcoded until the Slice 5 setup UI supplies a gender per
 // speaker. Gender follows the SPEAKER, not the translation direction (see
@@ -264,16 +265,34 @@ export default function Home() {
       server: null,
     };
 
+    // Client-side backstop (Slice 4d): bounds the BROWSER's wait, distinct
+    // from the server's own AbortController around its Gemini call — a dead
+    // network or a response that never arrives would otherwise hang this
+    // turn forever. Shares its arithmetic with the server (lib/deadline.ts)
+    // so the two can't drift, and computeClientBackstopMs already guarantees
+    // the client never gives up before the server does.
+    const controller = new AbortController();
+    const backstopMs = computeClientBackstopMs(rec.durationSec);
+    const timer = setTimeout(() => controller.abort(), backstopMs);
+
     try {
       const fd = new FormData();
       fd.append("audio", rec.blob, "turn.wav");
       // sourceLang is the side that tapped (locked decision 1). pipeline omitted —
       // it inherits DEFAULT_PIPELINE (gemini-direct).
       fd.append("sourceLang", side);
+      // durationSec is a HINT only, not authoritative: the server parses the
+      // WAV itself (lib/wav-duration.ts) and uses this value solely as a
+      // fallback when its own parse fails — never trusted over the parse.
+      fd.append("durationSec", String(rec.durationSec));
       // encoded: WAV encode is already complete (it ran inside stopRecording);
       // mark immediately before fetch() so release→encoded isolates encode+pre-flight.
       timing.encoded = performance.now();
-      const res = await fetch("/api/translate", { method: "POST", body: fd });
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        body: fd,
+        signal: controller.signal,
+      });
       // firstByte: response headers received (fetch promise resolved).
       timing.firstByte = performance.now();
       let data:
@@ -316,10 +335,25 @@ export default function Home() {
       // translation can legitimately be empty (a malformed-but-200 response);
       // there's nothing to synthesise in that case, so don't bother speak().
       if (translation.trim()) void speakTranslation(id, translation, side);
-    } catch {
+    } catch (err) {
       timing.complete = performance.now();
       const requestMs = timing.encoded ? Math.round(timing.complete - timing.encoded) : undefined;
-      updateTurn(id, { status: "error", errorLabel: "network", requestMs, timing });
+      // Distinguish our own backstop firing from any other network failure —
+      // everything else keeps the existing "network" label unchanged.
+      const aborted =
+        typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError";
+      updateTurn(id, {
+        status: "error",
+        errorLabel: aborted ? "client timeout" : "network",
+        requestMs,
+        timing,
+      });
+    } finally {
+      // Runs on every exit path — the early return in the !res.ok branch,
+      // the normal fall-through on success, and the catch above — so a
+      // completed request never leaves a pending timer that could fire
+      // later and abort a controller nothing is still listening to.
+      clearTimeout(timer);
     }
   }
 

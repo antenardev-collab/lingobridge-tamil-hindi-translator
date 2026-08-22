@@ -82,11 +82,15 @@ export interface ServerDebug {
   /** Slice 4d: the timeout deadline (ms) applied to this request's Gemini call. */
   deadlineMs?: number;
   /**
-   * Slice 4d: "measured" when deadlineMs was derived from audioDurationSec,
-   * "fallback" when the duration was unparseable or implausible and the
-   * fixed fallback deadline was used instead.
+   * Slice 4d: "measured" when deadlineMs was derived from the server's own
+   * WAV parse (audioDurationSec) — this meaning is unchanged from the
+   * original single-tier version, so historical results stay comparable.
+   * "client-hint" (step 2) when the server's own parse failed/was
+   * implausible but the client-supplied durationSec hint was usable
+   * instead. "fallback" when neither was usable and the fixed fallback
+   * deadline was used.
    */
-  deadlineSource?: "measured" | "fallback";
+  deadlineSource?: "measured" | "client-hint" | "fallback";
 }
 
 /**
