@@ -1244,6 +1244,42 @@ separately, not side effects of getting language detection right.
   stateless; this project has no database (see CLAUDE.md — session state is
   React memory only). Deferred deliberately to beta, not forgotten.
 
+### The calling feature — long-term product direction (intent captured 2026-08-22, not a commitment)
+
+**Not a scheduled slice.** This records the destination several parked
+items already point at, not a plan — the document had the references but
+never wrote down what they were pointing at. **Slice 4 was deliberately
+not designed around it:** the endpoint topology (4c), locked decision 2's
+mic hard-gate, and the tap-to-talk interaction model all target the
+shop-counter POC, not a call.
+
+**The feature.** Two people on a call, each speaking their own language,
+each hearing the other in their own — and, long-term, each hearing the
+translation in the *other speaker's own cloned voice*, not a stock voice.
+ElevenLabs exposes cloning through the same `voice_id` parameter already
+used for the stock Janani/Rohit voices (CLAUDE.md → Stack), which is why
+the 4c provider choice does not foreclose this: no provider swap would be
+needed to add cloning later, only a different `voice_id` per speaker.
+
+**What already points at it — cross-references, made bidirectional:**
+- The prosody observation (Open items, below): an audio-to-audio path
+  that never flattens to text is what would carry tone of voice, and it
+  is the same architecture cloning-on-a-call needs.
+- Streaming STT, parked as a native-app item (Slice 4d step 1 → G,
+  above): the streaming audio path it needs is the same one a live call
+  needs.
+- Open simultaneous conversation replacing hold-to-talk, already parked
+  via the Live API note (Slice 4 → TTS latency & model notes, above): "it
+  is designed for continuous full-duplex audio... Treat the Live API as a
+  separate architecture with that constraint to solve, not a swap into
+  the current tap-to-talk design."
+
+**Target markets — stated intent, not a plan.** India first, Europe
+beyond the shop POC. The boutique is a test venue because that is where
+native Hindi speakers are available to test with — **it is not the
+product.** The product is general-purpose conversation between speakers
+of different Indian languages.
+
 ## Open items
 
 - **The venue-phrase removal from `lib/prompt.ts` (committed 2026-08-16)
