@@ -1137,7 +1137,11 @@ leg, not the ~2927ms server leg (see "Real-device latency", above). **That
 reasoning holds for 2–5 second turns.** At 30 seconds the payload is 1.3MB
 and `roundTripMs` ran 4.0–6.9s against 2.7s of server time — transport
 becomes the dominant cost and compression attacks it directly. **Needs
-revisit if long turns are supported, not reopened now.**
+revisit if long turns are supported, not reopened now.** **Explicit
+trigger: if real conversational turns are observed running past roughly
+15 seconds, compression becomes a live web-POC candidate — it is not
+deferred to native, since a browser can encode Opus or MP3 and Gemini
+accepts both.**
 
 **I. Native-app parking list — new entries.**
 - **Transport.** ~700ms each way phone↔Vercel on a 145KB payload; far worse
@@ -1289,6 +1293,47 @@ separately, not side effects of getting language detection right.
   observed on request 4 of a ten-request warm run (see the region re-run,
   Slice 4 → 4a) — concurrency-driven cold starts are a separate problem a
   startup ping cannot address either.
+- **Observed 2026-08-22, on device — proper nouns are substituted, not
+  preserved. Defect, Slice 5 or 6.** The Hindi utterance "Anten Ji" was
+  rendered in Tamil as "Aunty" — a personal name replaced by an unrelated
+  common noun. **This sits above the "manageable, not accurate" bar, not
+  below it.** Contrast the ElevenLabs word-slur finding (`hours` heard
+  wrong, ElevenLabs evaluation above) — that degrades toward ugly, not
+  toward wrong, because it's still recognisably the right word badly
+  pronounced. A name replaced by a *different* word is wrong outright.
+  Names sit alongside numbers, prices, sizes and dates in the category
+  where roughly right does not exist — in a shop, addressing someone by
+  the wrong name, or as if they were a stranger's relative, is a real
+  failure, not a rough edge. **Likely mechanism:** `gemini-3.1-flash-lite`
+  performs STT and translation in a single call, so it never commits to a
+  proper-noun boundary on its own — it maps acoustics to the likeliest
+  word in context, and a low-frequency name loses to a high-frequency
+  common noun that sounds similar (the same lexical-prior shape recorded
+  for `ஐயாயிரம்` → `ஐயா`, Slice 3 findings, above). **The obvious fix — a
+  prompt rule instructing the model to preserve proper nouns — should be
+  treated with suspicion** given the prompt-rule dead ends already
+  recorded in this file (the no-speech rule, Slice 2; the whole-sentence
+  target-script rule, Slice 4), and should be tested before being assumed
+  to work. A known-names list or a post-recognition guard are the more
+  likely shapes. Not scoped or estimated.
+- **Observed 2026-08-22 — prosody does not survive the pipeline.
+  Architectural property, not a bug.** A sung Tamil utterance was
+  translated and re-spoken as flat, unsung speech. **This is structural,
+  not a defect to fix at this layer.** The pipeline is audio → text →
+  audio; melody, emphasis, emotional colouring and question intonation are
+  all discarded at the text boundary, and ElevenLabs re-reads the
+  resulting text in a neutral register with no signal of how the original
+  was delivered. **The consequence that actually matters for the product
+  is not the singing case — it's tone of voice.** An angry, urgent, or
+  distressed speaker also arrives flat on the listener's side; in a
+  dispute or an emergency, the listener loses information they needed.
+  Singing is the funny case; tone of voice is the serious one. **Only
+  addressable by an audio-to-audio path that never flattens to text** —
+  architecturally the same shape a long-term calling feature with voice
+  cloning would require, were one ever scoped. No such feature is
+  currently recorded anywhere in this document, so this is noted as a
+  structural observation and a forward-looking architectural link, not a
+  reference to an existing parked goal. Nothing proposed now.
 
 ## Session hygiene
 
