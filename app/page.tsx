@@ -175,6 +175,19 @@ export default function Home() {
   // of the shared Turn/CapturedTurn shape (lib/types.ts).
   const [ttsResults, setTtsResults] = useState<Record<string, PlaybackResult>>({});
 
+  // TODO(remove-before-beta): Slice 4d temporary test affordance. Set once
+  // on mount from ?forcetimeout=1 in the URL; when true, every turn sends
+  // forceTimeout: "1" to /api/translate so the 504 path and the failure
+  // sounds can be exercised on demand on a real phone instead of waiting
+  // for a genuine failure (none has occurred in 105 probe requests). Delete
+  // this state, the effect below, its FormData use in handleCapture, and
+  // the on-screen indicator before shop testing.
+  const [forceTimeoutMode, setForceTimeoutMode] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setForceTimeoutMode(params.get("forcetimeout") === "1");
+  }, []);
+
   // Release mark of the previous turn (client clock), for firstTurn + the idle
   // gap. Null until the first release. A ref, not state — it must not re-render.
   const prevReleaseRef = useRef<number | null>(null);
@@ -292,6 +305,11 @@ export default function Home() {
       // WAV itself (lib/wav-duration.ts) and uses this value solely as a
       // fallback when its own parse fails — never trusted over the parse.
       fd.append("durationSec", String(rec.durationSec));
+      // TODO(remove-before-beta): Slice 4d temporary test affordance — see
+      // the forceTimeoutMode state declaration above.
+      if (forceTimeoutMode) {
+        fd.append("forceTimeout", "1");
+      }
       // encoded: WAV encode is already complete (it ran inside stopRecording);
       // mark immediately before fetch() so release→encoded isolates encode+pre-flight.
       timing.encoded = performance.now();
@@ -571,6 +589,10 @@ export default function Home() {
     <main className="screen">
       {half("ta")}
       {half("hi")}
+      {/* TODO(remove-before-beta): Slice 4d temporary test affordance — see
+          the forceTimeoutMode state declaration above. Plain text, no
+          styling effort, deliberately impossible to miss while active. */}
+      {forceTimeoutMode && <div>FORCE TIMEOUT MODE ACTIVE — every turn will time out</div>}
       {/*
         Slice 4a: copy accumulated per-turn timing as JSON for pasting out.
         Fixed top-right, small and dim, deliberately clear of the two speak
