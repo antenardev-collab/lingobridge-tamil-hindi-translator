@@ -25,6 +25,14 @@ export interface TranslateInput {
   sourceLang: Side;
   /** Override the pipeline's default model (A/B via `--model=`). */
   model?: string;
+  /**
+   * Slice 4d: carries the caller's deadline (app/api/translate/route.ts
+   * owns the timeout policy). Optional so pipelines that don't read it stay
+   * valid — but a pipeline which ignores this is unbounded: it will run
+   * until the provider call itself resolves or rejects, with nothing
+   * enforcing the caller's deadline.
+   */
+  signal?: AbortSignal;
 }
 
 /**

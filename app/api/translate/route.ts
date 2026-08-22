@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DEFAULT_PIPELINE, isPipelineId } from "@/lib/models";
 import { runTranslate, TranslateValidationError } from "@/lib/translate";
+import { getWavDurationSec } from "@/lib/wav-duration";
 import type { ServerDebug } from "@/lib/types";
 import type { PipelineTiming, ProviderTrace } from "@/lib/translate/types";
 
@@ -10,6 +11,32 @@ import type { PipelineTiming, ProviderTrace } from "@/lib/translate/types";
  * false thereafter. Read-then-set below so the first response reports `true`.
  */
 let INSTANCE_WARMED = false;
+
+/**
+ * Slice 4d deadline model. The Gemini call is linear in speech length: source
+ * is the Slice 4d longform probe (docs/PLAN.md → Slice 4d step 1), 32
+ * requests, four Tamil clips 1.92–30.59s — least-squares fit
+ * requestToCompleteMs ≈ 795ms + 64ms per second of audio. Headroom is FIXED,
+ * not proportional to duration: the observed tail overshoots the linear
+ * prediction by a roughly constant amount regardless of turn length (a 3.4s
+ * clip once overshot by 2813ms; a 30.6s clip by 1973ms).
+ */
+const DEADLINE_BASE_MS = 795;
+const DEADLINE_PER_SEC_MS = 64;
+const DEADLINE_HEADROOM_MS = 1500;
+/** Used when duration can't be parsed or is outside the plausible range —
+ * degrading toward a long wait is safer than aborting a healthy turn on an
+ * unparsed duration. */
+const DEADLINE_FALLBACK_MS = 8000;
+const MIN_PLAUSIBLE_DURATION_SEC = 0.1;
+const MAX_PLAUSIBLE_DURATION_SEC = 120;
+
+/** `err.name === "AbortError"` without assuming AbortError is an `instanceof
+ * Error` — Node's fetch implementation rejects with a DOMException, which
+ * does not inherit from Error. */
+function isAbortError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError";
+}
 
 /**
  * Build the server-clock latency decomposition. Every field is a delta between
@@ -26,6 +53,9 @@ function buildDebug(
   edgeTrace: string | null,
   timing: PipelineTiming | null,
   trace: ProviderTrace | undefined,
+  audioDurationSec: number | null,
+  deadlineMs: number,
+  deadlineSource: "measured" | "fallback",
 ): ServerDebug {
   const round = (ms: number) => Math.round(ms);
   const entryToRequestMs = timing ? round(timing.requestSent - entry) : 0;
@@ -46,6 +76,9 @@ function buildDebug(
     completeToExitMs,
     serverTotalMs,
     residualMs: serverTotalMs - (entryToRequestMs + requestToCompleteMs + completeToExitMs),
+    audioDurationSec,
+    deadlineMs,
+    deadlineSource,
   };
 
   // providerTrace is OMITTED (not set to a zeroed object) when there's no
@@ -163,12 +196,33 @@ export async function POST(req: Request) {
 
   const audioBase64 = buf.toString("base64");
 
+  // Slice 4d: deadline is computed from the audio itself (lib/wav-duration.ts),
+  // not from a client-supplied number the server cannot verify.
+  const audioDurationSec = getWavDurationSec(buf);
+  let deadlineMs: number;
+  let deadlineSource: "measured" | "fallback";
+  if (
+    audioDurationSec !== null &&
+    audioDurationSec >= MIN_PLAUSIBLE_DURATION_SEC &&
+    audioDurationSec <= MAX_PLAUSIBLE_DURATION_SEC
+  ) {
+    deadlineMs = DEADLINE_BASE_MS + DEADLINE_PER_SEC_MS * audioDurationSec + DEADLINE_HEADROOM_MS;
+    deadlineSource = "measured";
+  } else {
+    deadlineMs = DEADLINE_FALLBACK_MS;
+    deadlineSource = "fallback";
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deadlineMs);
+
   try {
     const out = await runTranslate(pipeline, {
       audioBase64,
       audioFormat: "wav",
       sourceLang,
       model,
+      signal: controller.signal,
     });
     const exit = performance.now();
     // `debug` is ADDITIVE and non-breaking: scripts/eval.mjs reads only
@@ -179,13 +233,50 @@ export async function POST(req: Request) {
       pipeline,
       model: out.model,
       usage: out.usage,
-      debug: buildDebug(entry, exit, coldStart, execRegion, edgeTrace, out.timing, out.trace),
+      debug: buildDebug(
+        entry,
+        exit,
+        coldStart,
+        execRegion,
+        edgeTrace,
+        out.timing,
+        out.trace,
+        audioDurationSec,
+        deadlineMs,
+        deadlineSource,
+      ),
     });
   } catch (err) {
     const exit = performance.now();
     // No provider marks on the error path — report just the entry→exit envelope
     // so a slow *failure* is still measurable.
-    const debug = buildDebug(entry, exit, coldStart, execRegion, edgeTrace, null, undefined);
+    const debug = buildDebug(
+      entry,
+      exit,
+      coldStart,
+      execRegion,
+      edgeTrace,
+      null,
+      undefined,
+      audioDurationSec,
+      deadlineMs,
+      deadlineSource,
+    );
+    if (isAbortError(err)) {
+      // Distinct status for diagnosis and tuning the deadline model only —
+      // the client treats all failures identically, so this does not change
+      // client behaviour.
+      return NextResponse.json(
+        {
+          error: "translation timed out",
+          detail:
+            `deadline ${deadlineMs}ms applied (source: ${deadlineSource}) for audio duration ` +
+            `${audioDurationSec ?? "unknown"}s`,
+          debug,
+        },
+        { status: 504 },
+      );
+    }
     if (err instanceof TranslateValidationError) {
       // Already logged with raw text inside runTranslate; surface a clean error.
       return NextResponse.json(
@@ -199,5 +290,9 @@ export async function POST(req: Request) {
       { error: "translation failed", detail, debug },
       { status: 502 },
     );
+  } finally {
+    // A completed request must not leave a pending timer holding the
+    // function alive.
+    clearTimeout(timer);
   }
 }

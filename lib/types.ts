@@ -72,6 +72,21 @@ export interface ServerDebug {
    * must not look the same as a trace whose deltas happen to be zero.
    */
   providerTrace?: ServerProviderTrace;
+  /**
+   * Slice 4d: duration parsed from the WAV bytes (lib/wav.ts), or null if it
+   * couldn't be determined. Populated on both the success and error paths —
+   * lets a probe run verify the duration parse is correct without another
+   * deploy.
+   */
+  audioDurationSec?: number | null;
+  /** Slice 4d: the timeout deadline (ms) applied to this request's Gemini call. */
+  deadlineMs?: number;
+  /**
+   * Slice 4d: "measured" when deadlineMs was derived from audioDurationSec,
+   * "fallback" when the duration was unparseable or implausible and the
+   * fixed fallback deadline was used instead.
+   */
+  deadlineSource?: "measured" | "fallback";
 }
 
 /**

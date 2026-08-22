@@ -118,6 +118,7 @@ export const geminiDirect: TranslatePipeline = {
         "x-goog-api-key": apiKey,
       },
       body: payload,
+      signal: input.signal,
     });
     const headers = performance.now();
 
