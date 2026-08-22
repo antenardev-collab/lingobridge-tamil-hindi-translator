@@ -20,6 +20,37 @@ interface GeminiTokenDetail {
 }
 
 /**
+ * Shape of the fields we actually read from a generateContent response body.
+ * Not a full schema of Gemini's response — every field optional, mirroring
+ * GeminiPart/GeminiTokenDetail above, so an absent field types as undefined
+ * (?? then resolves it to null, never 0 or "").
+ */
+interface GeminiCandidate {
+  content?: {
+    parts?: GeminiPart[];
+  };
+  finishReason?: string;
+}
+interface GeminiUsageMetadata {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  promptTokensDetails?: GeminiTokenDetail[];
+  totalTokenCount?: number;
+  thoughtsTokenCount?: number;
+  serviceTier?: string;
+}
+interface GeminiModelStatus {
+  modelStage?: string;
+}
+interface GeminiResponse {
+  candidates?: GeminiCandidate[];
+  usageMetadata?: GeminiUsageMetadata;
+  modelVersion?: string;
+  responseId?: string;
+  modelStatus?: GeminiModelStatus;
+}
+
+/**
  * Slice 4a+ per-process call counter, read into ProviderTrace.callIndexInProcess.
  * Module scope like route.ts's INSTANCE_WARMED: persists across invocations of
  * one warm (Fluid) instance and resets to 0 whenever Vercel replaces the
@@ -99,7 +130,7 @@ export const geminiDirect: TranslatePipeline = {
     const bodyRead = performance.now();
     const responseBytes = Buffer.byteLength(text);
 
-    let json: any;
+    let json: GeminiResponse;
     try {
       json = JSON.parse(text);
     } catch {
