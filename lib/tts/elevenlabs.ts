@@ -5,9 +5,14 @@
  * TtsResult/TtsSuccess/TtsFailure below, never on ElevenLabs directly; those
  * exported types must stay provider-neutral.
  *
- * TODO(4d): no timeout, no AbortSignal — a hung request currently hangs
- * indefinitely. Timeout-and-abandon policy is owned by Slice 4d (see
- * docs/PLAN.md), not this module.
+ * Timeout handling (Slice 4d step 2): synthesiseSpeech() accepts an
+ * optional AbortSignal and passes it straight through to the provider
+ * fetch — an aborted call returns TtsFailure{reason:"aborted"} rather than
+ * hanging. This module enforces no deadline of its own; the caller decides
+ * whether and when to abort. (No caller passes one yet — app/api/tts/route.ts
+ * is unchanged this step — but the plumbing exists for when one does.) The
+ * client-side fetch/read timeout and the play()-stall watchdog both live in
+ * lib/tts/playback.ts, not here.
  */
 
 /**
@@ -93,7 +98,14 @@ export interface TtsSuccess {
  */
 export interface TtsFailure {
   ok: false;
-  reason: "missing-api-key" | "empty-text" | "network-error" | "http-error";
+  /**
+   * `aborted` (Slice 4d step 2) is deliberately distinct from
+   * `network-error`: `network-error` means the fetch to the provider
+   * failed on its own (DNS, connection refused, transport error);
+   * `aborted` means WE gave up via the caller's AbortSignal — a different
+   * cause, useful to tell apart when diagnosing a timeout policy.
+   */
+  reason: "missing-api-key" | "empty-text" | "network-error" | "http-error" | "aborted";
   status: number | null;
   detail: string;
 }
@@ -124,6 +136,7 @@ export async function synthesiseSpeech(
   text: string,
   targetLang: TtsTargetLang,
   gender: TtsVoiceGender,
+  signal?: AbortSignal,
 ): Promise<TtsResult> {
   // Empty/whitespace-only input never reaches the network. Returning an
   // empty audio stream would degrade toward silence — the project's
@@ -161,11 +174,14 @@ export async function synthesiseSpeech(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal,
     });
   } catch (err) {
+    const aborted =
+      typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError";
     return {
       ok: false,
-      reason: "network-error",
+      reason: aborted ? "aborted" : "network-error",
       status: null,
       detail: err instanceof Error ? err.message : String(err),
     };

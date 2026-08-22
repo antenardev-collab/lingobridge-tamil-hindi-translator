@@ -8,11 +8,22 @@ import type { CaptureEngine } from "../recorder";
  * lib/tts/elevenlabs.ts — that module is server-side and holds the API key;
  * this is client code and goes through the route like any other caller.
  *
- * Returns a discriminated union describing the outcome — never throws.
+ * Returns a discriminated union describing the outcome — never throws, and
+ * (Slice 4d step 2) always settles: every path that can leave the promise
+ * pending has a bound on it now.
  *
- * TODO(4d): no timeout, no AbortSignal on the /api/tts request — a hung
- * request leaves this turn waiting indefinitely. Timeout-and-abandon policy
- * is Slice 4d's (see docs/PLAN.md), not this module's.
+ * Timeout handling (Slice 4d step 2), two independent mechanisms for two
+ * independent failure modes:
+ *   1. The /api/tts fetch and the response body read share one
+ *      FETCH_TIMEOUT_MS AbortController — a stalled request or a stalled
+ *      download both surface as PlaybackFailure{reason:"fetch-timeout"}
+ *      rather than hanging.
+ *   2. Once playback has genuinely started, a separate PLAYBACK_STALL_MS
+ *      watchdog (armed when play() resolves, reset on every `timeupdate`)
+ *      catches what a fetch timeout cannot: playback starting and then
+ *      silently stalling with neither `ended` nor `error` ever firing.
+ *      Previously this left the mic gate engaged permanently, with no
+ *      recovery but a page reload — see docs/PLAN.md.
  */
 
 /** Output language of the synthesised speech — the route's `targetLang`. */
@@ -27,6 +38,27 @@ export type VoiceGender = "male" | "female";
 // capture. Exported so lib/failure-audio.ts reuses this exact value rather
 // than redeclaring it — the two gating sequences must not drift apart.
 export const UNMUTE_DELAY_MS = 250;
+
+// Ceiling on the /api/tts fetch + response body read, combined. Deliberately
+// FLAT, not modelled on input length: unlike the Gemini leg (docs/PLAN.md —
+// the linear 795ms + 64ms/sec fit from the Slice 4d longform probe), no
+// measured relationship exists between input text length and TTS latency at
+// long text lengths, so a formula here would be invented, not derived.
+const FETCH_TIMEOUT_MS = 8000;
+
+// No-progress threshold for the post-play() watchdog. `timeupdate` fires
+// roughly four times a second while audio is genuinely advancing, so
+// PLAYBACK_STALL_MS is chosen to comfortably exceed that firing interval
+// many times over — this detects a stall of ANY kind (decode hang, OS/media
+// session interruption, anything) without ever having to estimate how long
+// the audio SHOULD take, which nothing in this module knows.
+const PLAYBACK_STALL_MS = 3000;
+
+/** `err.name === "AbortError"` without assuming AbortError is an `instanceof
+ * Error` — mirrors the same check in app/api/translate/route.ts. */
+function isAbortError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError";
+}
 
 /**
  * Playback started and completed: the full `ended` sequence ran, the gate
@@ -72,7 +104,21 @@ export interface PlaybackFailure {
    * a log line reading bare "network-error" would be ambiguous about which
    * leg actually failed.
    */
-  reason: "fetch-failed" | "http-error" | "empty-audio" | "playback-error";
+  /**
+   * Slice 4d step 2 additions. `fetch-timeout` names the FETCH_TIMEOUT_MS
+   * ceiling expiring — distinct from `fetch-failed` (a real error, not a
+   * deadline) so the two are diagnosable apart. `playback-stall` names the
+   * PLAYBACK_STALL_MS watchdog firing after `play()` had already resolved —
+   * distinct from `playback-error` (the audio element itself reported an
+   * error) because a stall is silence, not an error event.
+   */
+  reason:
+    | "fetch-failed"
+    | "http-error"
+    | "empty-audio"
+    | "playback-error"
+    | "fetch-timeout"
+    | "playback-stall";
   /** HTTP status from /api/tts, where a response was received. */
   status: number | null;
   /** The route's own `error` field, where a JSON error body was returned. */
@@ -101,14 +147,33 @@ export async function speak(
 ): Promise<PlaybackResult> {
   const entry = performance.now();
 
+  // Shared AbortController for the fetch AND the body read below — a
+  // stalled download hangs just as effectively as a stalled request, so
+  // both must be inside the same deadline. Cleared on every exit from this
+  // guarded section (success or failure) so a completed attempt never
+  // leaves a pending timer.
+  const fetchController = new AbortController();
+  const fetchTimer = setTimeout(() => fetchController.abort(), FETCH_TIMEOUT_MS);
+
   let res: Response;
   try {
     res = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, targetLang, voiceGender }),
+      signal: fetchController.signal,
     });
   } catch (err) {
+    clearTimeout(fetchTimer);
+    if (isAbortError(err)) {
+      return {
+        ok: false,
+        reason: "fetch-timeout",
+        status: null,
+        error: null,
+        detail: `no response from /api/tts within ${FETCH_TIMEOUT_MS}ms`,
+      };
+    }
     return {
       ok: false,
       reason: "fetch-failed",
@@ -132,6 +197,7 @@ export async function speak(
     } catch {
       // Non-JSON error body — leave both null rather than guess.
     }
+    clearTimeout(fetchTimer);
     return { ok: false, reason: "http-error", status: res.status, error: errorField, detail: detailField };
   }
 
@@ -143,6 +209,16 @@ export async function speak(
   try {
     blob = await res.blob();
   } catch (err) {
+    clearTimeout(fetchTimer);
+    if (isAbortError(err)) {
+      return {
+        ok: false,
+        reason: "fetch-timeout",
+        status: res.status,
+        error: null,
+        detail: `response body did not finish downloading within ${FETCH_TIMEOUT_MS}ms`,
+      };
+    }
     return {
       ok: false,
       reason: "fetch-failed",
@@ -151,6 +227,7 @@ export async function speak(
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+  clearTimeout(fetchTimer);
   const responseReadMs = performance.now() - entry;
 
   if (blob.size === 0) {
@@ -185,6 +262,36 @@ export async function speak(
       URL.revokeObjectURL(url);
     }
 
+    // Post-play() stall watchdog. `watchdogTimer` is null whenever it isn't
+    // currently armed, so clearWatchdog is always safe to call even before
+    // the watchdog has ever been armed (see the play().catch() path below).
+    let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function clearWatchdog() {
+      if (watchdogTimer !== null) {
+        clearTimeout(watchdogTimer);
+        watchdogTimer = null;
+      }
+    }
+
+    function armWatchdog() {
+      watchdogTimer = setTimeout(() => {
+        // No `timeupdate` for PLAYBACK_STALL_MS since playback genuinely
+        // started (or since the last one) — pause first so a stalled
+        // element cannot resume later against a mic that has since been
+        // reopened, then release through the single settleAfterRelease
+        // path, same as every other terminal path.
+        audio.pause();
+        settleAfterRelease(() => ({
+          ok: false,
+          reason: "playback-stall",
+          status: res.status,
+          error: null,
+          detail: `no playback progress for ${PLAYBACK_STALL_MS}ms`,
+        }));
+      }, PLAYBACK_STALL_MS);
+    }
+
     // Schedules the ACTUAL gate release (decision 2's UNMUTE_DELAY_MS
     // reverb-tail wait) and resolves only once engine.unmute() has actually
     // run — never before. `build` receives the real gateReleasedMs mark,
@@ -199,10 +306,21 @@ export async function speak(
       }, UNMUTE_DELAY_MS);
     }
 
+    // Resets the watchdog on every sign of genuine progress. Fires roughly
+    // four times a second while audio is actually advancing — comfortably
+    // inside PLAYBACK_STALL_MS, so a real stall of any kind (not just a
+    // specific error condition) gets caught without this module ever having
+    // to know or estimate how long the audio should take.
+    audio.ontimeupdate = () => {
+      clearWatchdog();
+      armWatchdog();
+    };
+
     // Playback finished on its own — the URL can be revoked immediately
     // (the element no longer needs it); the promise settles once the
     // delayed gate release has actually happened.
     audio.onended = () => {
+      clearWatchdog();
       cleanupUrl();
       settleAfterRelease((gateReleasedMs) => ({
         ok: true,
@@ -217,6 +335,7 @@ export async function speak(
     // revoke, then settle (after the gate actually releases) with a failure
     // identifying it.
     audio.onerror = () => {
+      clearWatchdog();
       cleanupUrl();
       settleAfterRelease(() => ({
         ok: false,
@@ -234,18 +353,30 @@ export async function speak(
     engine.mute();
     const playCalledMs = performance.now() - entry;
 
-    audio.play().catch((err: unknown) => {
-      // play() rejected — autoplay policy, decode failure, anything.
-      // `ended` will never fire for a play() that never started, so this is
-      // the only place that terminates this attempt.
-      cleanupUrl();
-      settleAfterRelease(() => ({
-        ok: false,
-        reason: "playback-error",
-        status: res.status,
-        error: null,
-        detail: err instanceof Error ? err.message : String(err),
-      }));
-    });
+    audio
+      .play()
+      .then(() => {
+        // Armed on RESOLUTION, not on the play() call itself: if
+        // `timeupdate` never fires at all after this, the watchdog must
+        // still be the one thing standing between a silent stall and a
+        // permanently engaged gate.
+        armWatchdog();
+      })
+      .catch((err: unknown) => {
+        // play() rejected — autoplay policy, decode failure, anything.
+        // `ended` will never fire for a play() that never started, so this
+        // is the only place that terminates this attempt. The watchdog was
+        // never armed on this path (armWatchdog only runs in .then()
+        // above), but clearWatchdog is always safe to call regardless.
+        clearWatchdog();
+        cleanupUrl();
+        settleAfterRelease(() => ({
+          ok: false,
+          reason: "playback-error",
+          status: res.status,
+          error: null,
+          detail: err instanceof Error ? err.message : String(err),
+        }));
+      });
   });
 }

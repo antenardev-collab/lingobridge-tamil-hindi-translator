@@ -17,6 +17,11 @@ const FAILURE_STATUS: Record<TtsFailure["reason"], number> = {
   "missing-api-key": 500,
   "http-error": 502,
   "network-error": 502,
+  // Same status as network-error: this route doesn't pass a signal into
+  // synthesiseSpeech() yet (Slice 4d step 2 added the parameter, not a
+  // caller), so this is unreachable today — mapped only to keep the build
+  // green against the widened TtsFailure.reason union.
+  aborted: 502,
 };
 
 /**
