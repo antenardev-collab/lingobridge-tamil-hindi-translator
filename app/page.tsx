@@ -192,11 +192,19 @@ export default function Home() {
   // gap. Null until the first release. A ref, not state — it must not re-render.
   const prevReleaseRef = useRef<number | null>(null);
 
-  // Consecutive-failure count per side (Slice 4d), for the second-failure
-  // spoken message in lib/failure-audio.ts. A ref, not state — it must not
-  // re-render, and unlike prevReleaseRef this is scoped PER SIDE: each
-  // speaker's run of failures is independent of the other's.
+  // Consecutive-failure count per side (Slice 4d), for tier 2 (the
+  // per-speaker spoken message) in lib/failure-audio.ts. A ref, not state —
+  // it must not re-render, and unlike prevReleaseRef this is scoped PER
+  // SIDE: each speaker's run of failures is independent of the other's.
   const failureCountRef = useRef<Record<Side, number>>({ ta: 0, hi: 0 });
+
+  // Consecutive-failure count, GLOBAL across both sides, for tier 3 (the
+  // service-down message). A ref, not state. Tier 2 (per-side, above) means
+  // THIS speaker's turn failed, which is personal; tier 3 means the service
+  // itself is down, which isn't — two Tamil failures plus one Hindi failure
+  // is three failures and the thing is broken for both people, so this
+  // counts across sides rather than resetting per side.
+  const globalFailureCountRef = useRef(0);
 
   // One warm capture engine shared by both halves (one mic/context for the
   // device). Constructed here but it touches no audio until ensureWarm() runs on
@@ -206,6 +214,30 @@ export default function Home() {
   // Dispose the warm graph on unmount (stops the mic, closes the context). Uses
   // the stable ref, not `engine`, so the effect runs once.
   useEffect(() => () => void engineRef.current?.dispose(), []);
+
+  // Single implementation both legs (translate and TTS) call on failure —
+  // both legs feed both counters, since to the person a translate-leg
+  // failure and a TTS-leg failure are indistinguishable: the turn just
+  // didn't come through. Global takes precedence over per-side: tier 3 once
+  // the GLOBAL count has reached 3 regardless of this side's own count;
+  // otherwise tier 2 once THIS side's count has reached 2; otherwise tier 1.
+  // Fired without awaiting so the failure path never blocks.
+  function registerFailure(side: Side) {
+    failureCountRef.current[side] += 1;
+    globalFailureCountRef.current += 1;
+    const tier = globalFailureCountRef.current >= 3 ? 3 : failureCountRef.current[side] >= 2 ? 2 : 1;
+    void playFailureAudio(side, tier, engine);
+  }
+
+  // Single implementation both legs call on success — resets both counters,
+  // so tier 3 (the service-down read) requires three failures with no
+  // success anywhere in between, on either side. Only the translate-leg
+  // success path actually calls this (see below): the translate leg already
+  // resets when it succeeds, and a subsequent TTS success adds nothing.
+  function registerSuccess(side: Side) {
+    failureCountRef.current[side] = 0;
+    globalFailureCountRef.current = 0;
+  }
 
   // Patches only ever apply to a CapturedTurn (a "loading" turn resolving to
   // "done"/"error") — a gate trip is terminal from the moment it's pushed and
@@ -351,22 +383,20 @@ export default function Home() {
           `HTTP ${res.status} · ${routeError || "error"}` +
           (routeDetail ? ` · ${routeDetail}` : "");
         updateTurn(id, { status: "error", errorLabel, requestMs, timing });
-        // Failure audio (Slice 4d): a tone every time; the second-failure
-        // spoken message once this side's run reaches two or more. Not
-        // gated on error kind — a timeout, a 502, and a network error all
-        // produce the same sound; the person repeats regardless, and the
-        // distinct 504 exists for our diagnosis only. Fired without
-        // awaiting, same as speakTranslation below, so the failure path
-        // doesn't block.
-        failureCountRef.current[side] += 1;
-        void playFailureAudio(side, failureCountRef.current[side] >= 2, engine);
+        // Failure audio (Slice 4d — three-tier escalation, see
+        // registerFailure above). Not gated on error kind — a timeout, a
+        // 502, and a network error all produce the same sound; the person
+        // repeats regardless, and the distinct 504 exists for our
+        // diagnosis only.
+        registerFailure(side);
         return;
       }
       const original = data && typeof data.original === "string" ? data.original : "";
       const translation = data && typeof data.translation === "string" ? data.translation : "";
       updateTurn(id, { status: "done", original, translation, requestMs, timing });
-      // A successful turn ends this side's failure run.
-      failureCountRef.current[side] = 0;
+      // A successful translate-leg turn ends both failure runs (see
+      // registerSuccess above) — TTS success below does not call this again.
+      registerSuccess(side);
       // Speak the translation now that it's rendered (locked decision 2).
       // translation can legitimately be empty (a malformed-but-200 response);
       // there's nothing to synthesise in that case, so don't bother speak().
@@ -384,9 +414,8 @@ export default function Home() {
         requestMs,
         timing,
       });
-      // Same failure audio as the !res.ok branch above — see its comment.
-      failureCountRef.current[side] += 1;
-      void playFailureAudio(side, failureCountRef.current[side] >= 2, engine);
+      // Same failure audio as the !res.ok branch above — see registerFailure.
+      registerFailure(side);
     } finally {
       // Runs on every exit path — the early return in the !res.ok branch,
       // the normal fall-through on success, and the catch above — so a
@@ -418,6 +447,15 @@ export default function Home() {
     const result = await speak(translation, targetLang, VOICE_GENDER, engine);
     setSpeakingId(null);
     setTtsResults((prev) => ({ ...prev, [id]: result }));
+    // Feeds the same escalation counters as a translate-leg failure (Slice
+    // 4d — three-tier escalation): to the person, a TTS failure and a
+    // translate failure are indistinguishable — the turn didn't come
+    // through either way. `sourceLang` is the SPEAKER's side, the same
+    // `side` handleCapture's failures register against — this runs only
+    // after a translate success, which already reset both counters, so a
+    // TTS failure here correctly reads as the first failure of a fresh run,
+    // not a continuation of a run that already ended in success.
+    if (!result.ok) registerFailure(sourceLang);
   }
 
   // Copy all accumulated turn timing as JSON for pasting out (Slice 4a). Debug
