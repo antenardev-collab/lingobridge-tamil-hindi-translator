@@ -24,8 +24,9 @@ export type VoiceGender = "male" | "female";
 // Decision 2: unmute 250ms after `ended`, not immediately — the mic stays
 // gated through a short reverb/room-tail window after the audio itself
 // stops, so playback's own tail can't be picked up as the start of the next
-// capture.
-const UNMUTE_DELAY_MS = 250;
+// capture. Exported so lib/failure-audio.ts reuses this exact value rather
+// than redeclaring it — the two gating sequences must not drift apart.
+export const UNMUTE_DELAY_MS = 250;
 
 /**
  * Playback started and completed: the full `ended` sequence ran, the gate

@@ -13,6 +13,7 @@ import {
   type VoiceGender,
 } from "@/lib/tts/playback";
 import { computeClientBackstopMs } from "@/lib/deadline";
+import { playFailureAudio } from "@/lib/failure-audio";
 
 // TODO(5): hardcoded until the Slice 5 setup UI supplies a gender per
 // speaker. Gender follows the SPEAKER, not the translation direction (see
@@ -178,6 +179,12 @@ export default function Home() {
   // gap. Null until the first release. A ref, not state — it must not re-render.
   const prevReleaseRef = useRef<number | null>(null);
 
+  // Consecutive-failure count per side (Slice 4d), for the second-failure
+  // spoken message in lib/failure-audio.ts. A ref, not state — it must not
+  // re-render, and unlike prevReleaseRef this is scoped PER SIDE: each
+  // speaker's run of failures is independent of the other's.
+  const failureCountRef = useRef<Record<Side, number>>({ ta: 0, hi: 0 });
+
   // One warm capture engine shared by both halves (one mic/context for the
   // device). Constructed here but it touches no audio until ensureWarm() runs on
   // the first pointerdown — so nothing is acquired at page load. Disposed on unmount.
@@ -326,11 +333,22 @@ export default function Home() {
           `HTTP ${res.status} · ${routeError || "error"}` +
           (routeDetail ? ` · ${routeDetail}` : "");
         updateTurn(id, { status: "error", errorLabel, requestMs, timing });
+        // Failure audio (Slice 4d): a tone every time; the second-failure
+        // spoken message once this side's run reaches two or more. Not
+        // gated on error kind — a timeout, a 502, and a network error all
+        // produce the same sound; the person repeats regardless, and the
+        // distinct 504 exists for our diagnosis only. Fired without
+        // awaiting, same as speakTranslation below, so the failure path
+        // doesn't block.
+        failureCountRef.current[side] += 1;
+        void playFailureAudio(side, failureCountRef.current[side] >= 2, engine);
         return;
       }
       const original = data && typeof data.original === "string" ? data.original : "";
       const translation = data && typeof data.translation === "string" ? data.translation : "";
       updateTurn(id, { status: "done", original, translation, requestMs, timing });
+      // A successful turn ends this side's failure run.
+      failureCountRef.current[side] = 0;
       // Speak the translation now that it's rendered (locked decision 2).
       // translation can legitimately be empty (a malformed-but-200 response);
       // there's nothing to synthesise in that case, so don't bother speak().
@@ -348,6 +366,9 @@ export default function Home() {
         requestMs,
         timing,
       });
+      // Same failure audio as the !res.ok branch above — see its comment.
+      failureCountRef.current[side] += 1;
+      void playFailureAudio(side, failureCountRef.current[side] >= 2, engine);
     } finally {
       // Runs on every exit path — the early return in the !res.ok branch,
       // the normal fall-through on success, and the catch above — so a
