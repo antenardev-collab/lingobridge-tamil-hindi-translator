@@ -1037,6 +1037,125 @@ estimate as the authoritative number, not an addition to it.
   names may not describe what they actually measure. **Verify and rename in
   4d before these numbers are used for any decision.**
 
+### Slice 4d step 1 — providerTrace instrumentation and three latency probes (2026-08-22)
+
+**A. Instrumentation delivered.** `providerTrace` added to `/api/translate`'s
+`debug` object (`28edb35`/`b0ec89c`), splitting `requestToCompleteMs` into
+`serialiseMs`, `preFetchMs`, `fetchToHeadersMs`, `bodyDownloadMs`, `parseMs`,
+plus request/response byte sizes, `callIndexInProcess`, and the previously
+discarded response metadata (`finishReason`, `modelVersion`, `responseId`,
+`modelStage`, `serviceTier`, `totalTokens`, `thoughtsTokens`).
+`traceResidualMs` is a rounding check only — the five sub-intervals are
+contiguous and sum to `requestToCompleteMs` by construction, so unlike
+`residualMs` it cannot surface a missing mark.
+
+- **Process lesson.** `28edb35` typechecked but failed `next build` on
+  `@typescript-eslint/no-explicit-any`, because `tsc --noEmit` does not run
+  ESLint. Fixed in `b0ec89c`. **Standing rule going forward: verify with both
+  `tsc --noEmit` and `eslint` before committing.**
+
+**B. Our own code is not the cost.** Across 105 warm requests: `serialiseMs`
+0–58ms, `preFetchMs` 0–9ms, `parseMs` 0ms, `bodyDownloadMs` 1–19ms.
+Effectively all of `requestToCompleteMs` sits in `fetchToHeadersMs`. **No
+further server-side mark can decompose that span** — upload, queueing and
+inference are not separable from inside the function — so the remaining
+questions had to be answered behaviourally, below.
+
+**C. Idle gap has no effect. Hypothesis tested and dead.**
+`scripts/translate-gap-probe.mjs`, 25 requests, `hi-11.wav` held constant,
+gaps interleaved across 0/5/15/30/60s, five each. Medians by gap: 866 / 1360
+/ 990 / 928 / 1095 ms. No trend; the 5s group's elevation is one outlier and
+non-monotonic. `callIndexInProcess` ran 1→26 with no resets — one Vercel
+instance survived five separate 60-second idles, so instance age is not the
+variable either.
+- **Design flaw, recorded honestly.** Gaps ran in the same order every
+  cycle, so gap was confounded with position-in-cycle. It does not change
+  the conclusion (there is no signal to confound) but the design was weaker
+  than claimed. Later probes randomised order.
+
+**D. Cold starts are closed as a concern.** Four cold-started requests are
+now on record at 955–1142ms, at or below the warm median. Instance startup
+is not a latency problem for this route.
+
+**E. Serving variance is real and irreducible.** 25 byte-identical requests,
+same instance, same connection, identical output (`சரி மேம்.`, 15 tokens,
+all 25) ranged 731–2234ms. Per-clip IQRs across all probes ran 160–806ms.
+**This cannot be engineered away; it can only be survived.** This is what
+makes timeout-and-abandon the correct 4d answer rather than a pipeline
+rebuild.
+
+**F. Content length IS a cost — correcting an earlier finding in this same
+slice.** `scripts/translate-length-probe.mjs` (48 requests, six clips,
+1.92–5.97s) found medians spanning only 842–1047ms and concluded there was
+no length effect. **That conclusion was an artefact of the corpus's narrow
+range**: across 1.9–6.0s the length-dependent term is only 120–380ms and the
+fixed term dominates it.
+
+`scripts/translate-longform-probe.mjs` (32 requests, four Tamil clips,
+1.92–30.59s) extended the range fivefold and the effect is clearly linear:
+
+| clip | duration | audioTokens | completionTokens | median requestToCompleteMs | IQR |
+|---|---|---|---|---|---|
+| ta-12.wav | 1.92s | 48 | 14 | 927.5 | 182 |
+| ta-10.wav | 5.46s | 137 | 51 | 1096 | 160 |
+| tamil15s-16k.wav | 15.81s | 396 | 186 | 1853.5 | 327 |
+| tamil30s-16k.wav | 30.59s | 765 | 335 | 2717.5 | 806 |
+
+**Least-squares fit: translate leg ≈ 795ms + 64ms per second of speech.**
+Predicted vs actual: 916/927.5, 1141/1096, 1799/1853.5, 2739/2717.5 — every
+point within ~55ms.
+
+Equivalent readings of the same slope: 2.5ms per audio token, or 5.6ms per
+output token. **The data cannot distinguish input cost from output cost**,
+because audio length and translation length move together across all four
+clips. Stated in seconds of speech because that is the quantity known at
+release.
+
+**Scope limits:** Tamil audio in, Hindi text out only; `gemini-3.1-flash-lite`;
+IAD1; warm instance; 1.92–30.59s. Not verified for Hindi-in. All 32 requests
+returned `finishReason: STOP`, so no output was truncated. Audio
+tokenisation held at 25.0–25.1 per second of duration at every length,
+confirming it is duration-based and not sample-rate-dependent.
+
+**IQR grows with length** (182 → 160 → 327 → 806ms), so a single fixed
+timeout cannot serve both short and long turns. Proposed starting shape for
+the timeout policy: scale the deadline to recorded audio length using the
+linear model above, plus tail headroom. **Not yet decided.**
+
+**G. Streaming STT — parked as a native-app item, not a Slice 4 item.**
+Under the standing web-platform rule. Reasoning: the saving it targets is
+~190ms on a 3s turn and ~1.9s on a 30s turn, while transport on that same
+30s turn costs 2–4s. In the web POC it would split the single Gemini call
+and reopen the Slice 2 decision that Gemini won on Tamil STT quality, in
+exchange for the smaller of the two costs. In a native Android app with a
+streaming audio path it is the natural shape rather than a rebuild.
+
+**H. Audio compression — qualifying the reasoning for skipping it, now
+written down.** Reasoning previously used to deprioritise compression: audio
+is processed by duration, not size, so compression would help the transport
+leg, not the ~2927ms server leg (see "Real-device latency", above). **That
+reasoning holds for 2–5 second turns.** At 30 seconds the payload is 1.3MB
+and `roundTripMs` ran 4.0–6.9s against 2.7s of server time — transport
+becomes the dominant cost and compression attacks it directly. **Needs
+revisit if long turns are supported, not reopened now.**
+
+**I. Native-app parking list — new entries.**
+- **Transport.** ~700ms each way phone↔Vercel on a 145KB payload; far worse
+  at 1.3MB. A native app holding a persistent connection avoids per-request
+  setup a browser `fetch` pays. Web-platform limit.
+- **Capture clipping / AGC.** All seven device turns showed `peakDbfs: 0`,
+  almost certainly browser AGC. A native app gets real control over mic gain
+  and AGC. Web-platform limit. Still coupled to the `MIN_TURN_RMS_DBFS = -42`
+  energy gate (Slice 4 → 4b.2, above) — measure together, not separately.
+
+**J. Long-form clip provenance.** `tamil15s-16k.wav` (15.81s, 396 audio
+tokens) and `tamil30s-16k.wav` (30.59s, 765 audio tokens) were resampled
+from 48kHz originals using a 31-tap windowed-sinc FIR, Hamming window, 8kHz
+cutoff, 3:1 decimation. `test-clips/*.wav` is gitignored, so these files are
+local-only and not reproducible from the repo — hence recording their
+durations and token counts here. They are deliberately not in
+`ground-truth.json`, so the 26-clip eval baseline is unchanged.
+
 ---
 
 ## Slice 5 — Hands-free toggle
