@@ -136,7 +136,11 @@ interface GeminiPart {
   text?: string;
 }
 
-async function requestTransliteration(text: string, sourceLang: Side): Promise<RawTransliteration> {
+async function requestTransliteration(
+  text: string,
+  sourceLang: Side,
+  signal?: AbortSignal,
+): Promise<RawTransliteration> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
@@ -154,6 +158,7 @@ async function requestTransliteration(text: string, sourceLang: Side): Promise<R
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0 },
     }),
+    signal,
   });
   if (!res.ok) {
     const body = await res.text();
@@ -283,6 +288,9 @@ export interface GuardedTransliterateInput {
   /** The transliterator's actual input — the translation text. */
   translation: string;
   sourceLang: Side;
+  /** Optional — the caller owns the deadline; this module adds no timeout of
+   * its own. Passed straight through to the underlying fetch. */
+  signal?: AbortSignal;
 }
 
 export interface GuardedTransliterateResult {
@@ -329,7 +337,7 @@ export interface GuardedTransliterateResult {
 export async function guardedTransliterate(
   input: GuardedTransliterateInput,
 ): Promise<GuardedTransliterateResult> {
-  const { original, translation, sourceLang } = input;
+  const { original, translation, sourceLang, signal } = input;
 
   if (!hasLatinScript(translation)) {
     return {
@@ -346,7 +354,7 @@ export async function guardedTransliterate(
   const direction = directionLabel(sourceLang);
   let raw: RawTransliteration;
   try {
-    raw = await requestTransliteration(translation, sourceLang);
+    raw = await requestTransliteration(translation, sourceLang, signal);
   } catch (err) {
     logSkip({
       timestamp: new Date().toISOString(),
