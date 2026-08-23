@@ -83,6 +83,21 @@ function transportMs(t: TurnTiming): number | null {
 }
 
 /**
+ * Defensively parse the two transliteration debug fields off a translate
+ * response. Kept separate from parseServerDebug/ServerDebug (lib/types.ts) —
+ * same reasoning as ttsResults below: local UI/debug state only.
+ */
+function parseTranslitDebug(x: unknown): { triggered: boolean; ms: number | null } | null {
+  if (!x || typeof x !== "object") return null;
+  const d = x as Record<string, unknown>;
+  if (typeof d.transliterationTriggered !== "boolean") return null;
+  return {
+    triggered: d.transliterationTriggered,
+    ms: typeof d.transliterationMs === "number" ? d.transliterationMs : null,
+  };
+}
+
+/**
  * Analysis-ready export for one turn: client deltas (never raw performance.now
  * marks, which are meaningless out of context), payload/idle context, the server
  * decomposition, and the derived transport. Copied out as JSON for pasting.
@@ -174,6 +189,11 @@ export default function Home() {
   // copy-timings export (exportTurn). Local UI/debug state only — not part
   // of the shared Turn/CapturedTurn shape (lib/types.ts).
   const [ttsResults, setTtsResults] = useState<Record<string, PlaybackResult>>({});
+  // Transliteration debug per turn id, same local-state pattern as ttsResults
+  // above — not part of the shared Turn/CapturedTurn shape (lib/types.ts).
+  const [translitDebug, setTranslitDebug] = useState<
+    Record<string, { triggered: boolean; ms: number | null }>
+  >({});
 
   // TODO(remove-before-beta): Slice 4d temporary test affordance. Set once
   // on mount from ?forcetimeout=1 in the URL; when true, every turn sends
@@ -369,6 +389,8 @@ export default function Home() {
       // complete: response body fully read.
       timing.complete = performance.now();
       timing.server = parseServerDebug(data?.debug);
+      const xlitDebug = parseTranslitDebug(data?.debug);
+      if (xlitDebug) setTranslitDebug((prev) => ({ ...prev, [id]: xlitDebug }));
       const requestMs = Math.round(timing.complete - timing.encoded);
 
       if (!res.ok) {
@@ -565,6 +587,7 @@ export default function Home() {
             // Only a completed turn ever has one; ttsResults isn't touched
             // for "loading"/"error"/"gated" ids.
             const ttsResult = t.status === "done" ? ttsResults[t.id] : undefined;
+            const xlit = t.status === "done" ? translitDebug[t.id] : undefined;
             const text =
               t.status === "loading"
                 ? "…"
@@ -610,6 +633,12 @@ export default function Home() {
                             via exportTurn's `tts` field above. */}
                         {ttsResult && !ttsResult.ok && (
                           <div className="turn-timing">⚠ tts: {ttsFailureLabel(ttsResult)}</div>
+                        )}
+                        {xlit && (
+                          <div className="turn-timing">
+                            xlit: {xlit.triggered ? "yes" : "no"}
+                            {xlit.ms != null ? ` · ${xlit.ms} ms` : ""}
+                          </div>
                         )}
                       </>
                     )}
