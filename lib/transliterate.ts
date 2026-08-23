@@ -88,6 +88,19 @@ export function hasLatinScript(text: string): boolean {
   return /[A-Za-z]/.test(text);
 }
 
+export function needsTransliteration(text: string, sourceLang: Side): boolean {
+  const [low, high] = sourceLang === "hi" ? [0x0b80, 0x0bff] : [0x0900, 0x097f];
+  let hasTargetScript = false;
+  for (const ch of text) {
+    const c = ch.codePointAt(0)!;
+    if (c >= low && c <= high) {
+      hasTargetScript = true;
+      break;
+    }
+  }
+  return !hasTargetScript && hasLatinScript(text);
+}
+
 /**
  * Ordered digit-run extraction, script-agnostic: normalizes digits to ASCII
  * FIRST, then extracts. Without normalizing first, a Devanagari/Tamil digit on
