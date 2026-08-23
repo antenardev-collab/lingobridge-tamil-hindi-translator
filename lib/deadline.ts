@@ -29,6 +29,8 @@ export const MAX_PLAUSIBLE_DURATION_SEC = 120;
  */
 export const CLIENT_TRANSPORT_ALLOWANCE_MS = 3000;
 
+export const TRANSLITERATE_BUDGET_MS = 2500;
+
 /**
  * "client-hint" is never returned by computeServerDeadline itself — it
  * exists so callers with a third tier (server parse → client-supplied hint
@@ -80,5 +82,5 @@ export function computeServerDeadline(
  */
 export function computeClientBackstopMs(audioDurationSec: number | null): number {
   const { deadlineMs } = computeServerDeadline(audioDurationSec);
-  return deadlineMs + CLIENT_TRANSPORT_ALLOWANCE_MS;
+  return deadlineMs + TRANSLITERATE_BUDGET_MS + CLIENT_TRANSPORT_ALLOWANCE_MS;
 }
