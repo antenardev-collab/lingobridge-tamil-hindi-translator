@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { DEFAULT_PIPELINE, isPipelineId } from "@/lib/models";
 import { runTranslate, TranslateValidationError } from "@/lib/translate";
 import { getWavDurationSec } from "@/lib/wav-duration";
-import { computeServerDeadline, type DeadlineSource } from "@/lib/deadline";
+import { computeServerDeadline, TRANSLITERATE_BUDGET_MS, type DeadlineSource } from "@/lib/deadline";
+import { needsTransliteration, guardedTransliterate } from "@/lib/transliterate";
 import type { ServerDebug } from "@/lib/types";
 import type { PipelineTiming, ProviderTrace } from "@/lib/translate/types";
 
@@ -261,26 +262,68 @@ export async function POST(req: Request) {
       signal: controller.signal,
     });
     const exit = performance.now();
+    clearTimeout(timer);
+
+    let translation = out.translation;
+    const transliterationTriggered = needsTransliteration(out.translation, sourceLang);
+    let transliterationMs: number | null = null;
+    let transliterationUsedFallback: boolean | null = null;
+    let transliterationSkipped: boolean | null = null;
+    let transliterationPurityWarning: boolean | null = null;
+    let preTransliterationText: string | null = null;
+
+    if (transliterationTriggered) {
+      preTransliterationText = out.translation;
+      const xlitController = new AbortController();
+      const xlitTimer = setTimeout(() => xlitController.abort(), TRANSLITERATE_BUDGET_MS);
+      const xlitStart = performance.now();
+      try {
+        const xlitResult = await guardedTransliterate({
+          original: out.original,
+          translation: out.translation,
+          sourceLang,
+          signal: xlitController.signal,
+        });
+        translation = xlitResult.text;
+        transliterationUsedFallback = xlitResult.usedFallback;
+        transliterationSkipped = xlitResult.transliterationSkipped;
+        transliterationPurityWarning = xlitResult.scriptPurityWarning;
+      } catch {
+        translation = out.translation;
+      } finally {
+        clearTimeout(xlitTimer);
+      }
+      transliterationMs = Math.round(performance.now() - xlitStart);
+    }
+
     // `debug` is ADDITIVE and non-breaking: scripts/eval.mjs reads only
     // original/translation/model/usage/error/detail and ignores unknown keys.
     return NextResponse.json({
       original: out.original,
-      translation: out.translation,
+      translation,
       pipeline,
       model: out.model,
       usage: out.usage,
-      debug: buildDebug(
-        entry,
-        exit,
-        coldStart,
-        execRegion,
-        edgeTrace,
-        out.timing,
-        out.trace,
-        audioDurationSec,
-        deadlineMs,
-        deadlineSource,
-      ),
+      debug: {
+        ...buildDebug(
+          entry,
+          exit,
+          coldStart,
+          execRegion,
+          edgeTrace,
+          out.timing,
+          out.trace,
+          audioDurationSec,
+          deadlineMs,
+          deadlineSource,
+        ),
+        transliterationTriggered,
+        transliterationMs,
+        transliterationUsedFallback,
+        transliterationSkipped,
+        transliterationPurityWarning,
+        preTransliterationText,
+      },
     });
   } catch (err) {
     const exit = performance.now();
