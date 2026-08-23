@@ -2,6 +2,7 @@
 .next/
 .env*.local
 .vercel
+tsconfig.tsbuildinfo
 
 # Per-user local Claude Code settings (session permission grants, etc.)
 .claude/settings.local.json
