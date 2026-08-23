@@ -1160,6 +1160,37 @@ local-only and not reproducible from the repo — hence recording their
 durations and token counts here. They are deliberately not in
 `ground-truth.json`, so the 26-clip eval baseline is unchanged.
 
+### Slice 4d item 1 closed — transliterator wired into `/api/translate` (2026-08-24)
+
+**Closed.** `guardedTransliterate` (`lib/transliterate.ts`) is now wired
+into `/api/translate`, gated behind a new predicate `needsTransliteration`:
+it fires only when the translated text contains zero target-script
+characters and at least one Latin letter.
+
+- **Evidence for the trigger shape.** A 26-clip eval run against production
+  at commit `25de097` produced 4 fully-romanised outputs, all hi→ta, all
+  with zero Tamil characters. One ta→hi output contained a single Latin
+  letter (from `3D`) inside 31 Devanagari characters and correctly does not
+  trigger — confirming the predicate distinguishes a stray Latin character
+  embedded in otherwise-correct script from genuine romanisation.
+- **A/B listening test, native Tamil speaker.** Raw romanised audio was not
+  recognised as Tamil; the transliterated audio was. Digits read correctly
+  under transliteration; the raw romanised form slurred a digit in one of
+  two renders.
+- **`language_code` does not rescue romanised input.** `language_code` was
+  already being sent as the target language on every ElevenLabs request
+  (`lib/tts/elevenlabs.ts`) before this wiring went in, so the romanisation
+  problem was never a missing TTS setting. No TTS-side configuration fixes
+  it; the fix has to happen in the text itself, which is what this wiring
+  does.
+- **Cost and budget.** Measured transliteration latency: 486–586ms in
+  production, 708–1666ms locally. Budget set to a flat
+  `TRANSLITERATE_BUDGET_MS = 2500` (`lib/deadline.ts`), added only to the
+  client backstop (`computeClientBackstopMs`) — the server translate
+  deadline (`computeServerDeadline`) is unchanged.
+- **Device-verified.** Trigger fired on a real phone, output judged natural
+  by a native Tamil speaker, no perceptible added latency.
+
 ---
 
 ## Slice 5 — Hands-free toggle
@@ -1370,6 +1401,39 @@ of different Indian languages.
   currently recorded anywhere in this document, so this is noted as a
   structural observation and a forward-looking architectural link, not a
   reference to an existing parked goal. Nothing proposed now.
+
+- **`transportMs` over-reports by `transliterationMs` on triggered turns
+  (2026-08-24).** `serverTotalMs` is stamped (`exit = performance.now()`)
+  before the transliteration step runs in `/api/translate`, so
+  `transportMs` — derived client-side as round-trip minus `serverTotalMs`
+  (`app/page.tsx`) — silently absorbs the transliteration time on any turn
+  that triggers it. Confirmed on a device turn: reported `transportMs`
+  1540ms, actual transport ~1054ms. `transliterationMs` is separately
+  reported in `debug` and the turn export, so the true figure is
+  recoverable today, just not shown directly. Fix when timing code is next
+  touched.
+- **Client backstop's unknown-duration fallback branch is now 13500ms, up
+  from 11000ms (2026-08-24).** `computeClientBackstopMs`'s fallback branch
+  gained `TRANSLITERATE_BUDGET_MS` along with every other branch.
+  `deadlineSource` already reports when the fallback branch is used — check
+  real-device logs for how often before deciding whether the wider fallback
+  window needs attention.
+- **Guard 3 ("script purity") does not check target-script ranges — it
+  warns on any preserved English loanword, not just full romanisation
+  (2026-08-24).** It re-runs `hasLatinScript` on the transliterated output,
+  so it fires the same on a single surviving Latin loanword as on a fully
+  romanised sentence. Warning only, never trips — no fallback fires — so
+  this is a log-noise question, not a correctness one.
+- **Real-turn transliteration trigger rate is unknown (2026-08-24).** Eleven
+  natural conversational turns on-device produced zero triggers; the eval
+  corpus rate is 4 in 26. The two populations disagree and neither is large
+  enough to settle the real rate.
+- **Latin pressed against target script via a hyphen now has real-turn
+  evidence (2026-08-24).** Forms like `choices-ஐ` / `confuse-ஆ` — a Latin
+  loanword directly abutting a target-script suffix across a hyphen — are
+  the shape that produces the known ElevenLabs word-boundary slur (see the
+  ElevenLabs evaluation notes, above). Previously only a hypothesised
+  shape; now confirmed from real turns.
 
 ## Session hygiene
 

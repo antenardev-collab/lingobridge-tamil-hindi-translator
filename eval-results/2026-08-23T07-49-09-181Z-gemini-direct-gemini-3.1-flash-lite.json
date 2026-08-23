@@ -1,0 +1,593 @@
+{
+  "meta": {
+    "timestamp": "2026-08-23T07:49:09.184Z",
+    "pipeline": "gemini-direct",
+    "model": "gemini-3.1-flash-lite",
+    "baseUrl": "https://lingobridge-tamil-hindi-translator.vercel.app",
+    "domainFilter": null,
+    "fileFilter": null,
+    "usdInr": 88
+  },
+  "summary": {
+    "all": {
+      "clips": 26,
+      "errors": 0,
+      "okCount": 26,
+      "meanMs": 1839,
+      "p90Ms": 2139,
+      "mustPreserveTotal": 7,
+      "mustPreservePassed": 7,
+      "mustPreserveRate": 1,
+      "romanizedCount": 4,
+      "romanizedRate": 0.15384615384615385,
+      "meanCostUsd": 0.00018451923076923083,
+      "totalCostUsd": 0.004797500000000001
+    },
+    "byDomain": {
+      "general": {
+        "clips": 12,
+        "errors": 0,
+        "okCount": 12,
+        "meanMs": 1844,
+        "p90Ms": 2044,
+        "mustPreserveTotal": 3,
+        "mustPreservePassed": 3,
+        "mustPreserveRate": 1,
+        "romanizedCount": 1,
+        "romanizedRate": 0.08333333333333333,
+        "meanCostUsd": 0.00016445833333333332,
+        "totalCostUsd": 0.0019735
+      },
+      "tailoring": {
+        "clips": 14,
+        "errors": 0,
+        "okCount": 14,
+        "meanMs": 1834,
+        "p90Ms": 2139,
+        "mustPreserveTotal": 4,
+        "mustPreservePassed": 4,
+        "mustPreserveRate": 1,
+        "romanizedCount": 3,
+        "romanizedRate": 0.21428571428571427,
+        "meanCostUsd": 0.00020171428571428573,
+        "totalCostUsd": 0.002824
+      }
+    }
+  },
+  "results": [
+    {
+      "file": "ta-01.wav",
+      "sourceLang": "ta",
+      "domain": "general",
+      "elapsedMs": 3427,
+      "expectedTranslation": "कल कितने बजे शॉप आकर वर्क स्टार्ट करेंगे?",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "நாளைக்கு எத்தனை மணிக்கு ஷாப்புக்கு வந்து ஒர்க் ஸ்டார்ட் பண்ணுவீங்க?",
+      "translation": "कल कितने बजे शॉप पर आकर वर्क स्टार्ट करोगे?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 414,
+        "audioTokens": 104,
+        "completionTokens": 37,
+        "costUsd": 0.000185
+      }
+    },
+    {
+      "file": "ta-02.wav",
+      "sourceLang": "ta",
+      "domain": "general",
+      "elapsedMs": 1937,
+      "expectedTranslation": "इस वर्क को खत्म करने में आपको कितना टाइम लगेगा?",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "இந்த வொர்க் முடிக்க உங்களுக்கு எவ்வளவு டைம் ஆகும்?",
+      "translation": "ये वर्क खत्म करने में आपको कितना टाइम लगेगा?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 408,
+        "audioTokens": 98,
+        "completionTokens": 28,
+        "costUsd": 0.0001685
+      }
+    },
+    {
+      "file": "ta-03.wav",
+      "sourceLang": "ta",
+      "domain": "tailoring",
+      "elapsedMs": 1681,
+      "expectedTranslation": "कल कस्टमर को यह डिलीवर कर पाएंगे क्या?",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "நாளைக்கு கஸ்டமருக்கு இத டெலிவரி பண்ண முடியுமா?",
+      "translation": "कल कस्टमर को इसे डिलीवरी कर सकते हैं क्या?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 394,
+        "audioTokens": 84,
+        "completionTokens": 33,
+        "costUsd": 0.000169
+      }
+    },
+    {
+      "file": "ta-04.wav",
+      "sourceLang": "ta",
+      "domain": "general",
+      "elapsedMs": 1625,
+      "expectedTranslation": "बहुत कम टाइम है, फास्ट वर्क खत्म करिए",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "ரொம்ப கம்மி டைம் தான் இருக்கு, பாஸ்ட்டா ஒர்க்க முடிங்க.",
+      "translation": "बहुत कम टाइम ही है, फास्ट वर्क खत्म करो।",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 394,
+        "audioTokens": 84,
+        "completionTokens": 38,
+        "costUsd": 0.0001765
+      }
+    },
+    {
+      "file": "ta-05.wav",
+      "sourceLang": "ta",
+      "domain": "tailoring",
+      "elapsedMs": 2353,
+      "expectedTranslation": "इस ब्लाउज़ में ब्लू कलर स्टोन लगाकर सेट करें तो डिज़ाइन अच्छा आएगा क्या?",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "இந்த பிளவுஸ்க்கு ப்ளூ கலர் ஸ்டோன் வச்சு செட் பண்ணா டிசைன் நல்லா வருமா?",
+      "translation": "इस ब्लाउज पे ब्लू कलर स्टोन लगा के सेट करेंगे तो डिज़ाइन अच्छा आएगा क्या?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 431,
+        "audioTokens": 121,
+        "completionTokens": 55,
+        "costUsd": 0.0002205
+      }
+    },
+    {
+      "file": "ta-06.wav",
+      "sourceLang": "ta",
+      "domain": "tailoring",
+      "elapsedMs": 1651,
+      "expectedTranslation": "कल 2 ब्लाउज़ पर वर्क करना है",
+      "mustPreserve": [
+        "2"
+      ],
+      "model": "gemini-3.1-flash-lite",
+      "original": "நாளைக்கு ரெண்டு பிளவுஸ்க்கு ஒர்க் போடணும்.",
+      "translation": "कल दो ब्लाउज पर वर्क डालना है।",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 387,
+        "audioTokens": 77,
+        "completionTokens": 32,
+        "costUsd": 0.000164
+      }
+    },
+    {
+      "file": "ta-07.wav",
+      "sourceLang": "ta",
+      "domain": "general",
+      "elapsedMs": 1630,
+      "expectedTranslation": "आज नाइट वर्क करके कल लीव ले लीजिए",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "இன்னைக்கு நைட் ஒர்க் போட்டுட்டு நாளைக்கு லீவ் எடுத்துக்கோங்க.",
+      "translation": "आज रात वर्क कर लो और कल लीव ले लो।",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 414,
+        "audioTokens": 104,
+        "completionTokens": 36,
+        "costUsd": 0.0001835
+      }
+    },
+    {
+      "file": "ta-08.wav",
+      "sourceLang": "ta",
+      "domain": "tailoring",
+      "elapsedMs": 2037,
+      "expectedTranslation": "कल के वर्क के लिए स्टोन और थ्रेड है या नहीं, एक बार चेक कर लीजिए",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "நாளைக்கு போடுற ஒர்க்குக்கு ஸ்டோனும் த்ரெட்டும் இருக்கான்னு ஒருவாட்டி செக் பண்ணிக்கோங்க.",
+      "translation": "कल जो वर्क डालना है उसके लिए स्टोन और थ्रेड है क्या, एक बार चेक कर लो।",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 446,
+        "audioTokens": 136,
+        "completionTokens": 59,
+        "costUsd": 0.000234
+      }
+    },
+    {
+      "file": "ta-09.wav",
+      "sourceLang": "ta",
+      "domain": "tailoring",
+      "elapsedMs": 2139,
+      "expectedTranslation": "3D में वर्क अच्छे से पॉप आउट दिखना चाहिए",
+      "mustPreserve": [
+        "3D"
+      ],
+      "model": "gemini-3.1-flash-lite",
+      "original": "3D-ல வொர்க் நல்லா பாப்-அவுட்டா தெரியணும்.",
+      "translation": "3D में वर्क अच्छे से पॉप-आउट दिखना चाहिए।",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 399,
+        "audioTokens": 89,
+        "completionTokens": 38,
+        "costUsd": 0.000179
+      }
+    },
+    {
+      "file": "ta-10.wav",
+      "sourceLang": "ta",
+      "domain": "tailoring",
+      "elapsedMs": 1956,
+      "expectedTranslation": "यह डिज़ाइन अच्छा नहीं आया, हमें चेंज करना है। जो वर्क किया है उसे निकाल दीजिए",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "இந்த டிசைன் நல்லா வரல. நம்ம சேஞ்ச் பண்ணனும். போட்ட வொர்க்கை எடுத்துருங்க.",
+      "translation": "ये डिजाइन अच्छा नहीं आया है। हमें चेंज करना पड़ेगा। जो वर्क किया है उसे हटा दो।",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 447,
+        "audioTokens": 137,
+        "completionTokens": 51,
+        "costUsd": 0.0002225
+      }
+    },
+    {
+      "file": "ta-11.wav",
+      "sourceLang": "ta",
+      "domain": "general",
+      "elapsedMs": 1624,
+      "expectedTranslation": "ठीक है",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "சரி",
+      "translation": "ठीक है",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 357,
+        "audioTokens": 47,
+        "completionTokens": 10,
+        "costUsd": 0.000116
+      }
+    },
+    {
+      "file": "ta-12.wav",
+      "sourceLang": "ta",
+      "domain": "general",
+      "elapsedMs": 1452,
+      "expectedTranslation": "कल?",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "நாளைக்கா?",
+      "translation": "कल क्या?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 358,
+        "audioTokens": 48,
+        "completionTokens": 14,
+        "costUsd": 0.0001225
+      }
+    },
+    {
+      "file": "ta-13.wav",
+      "sourceLang": "ta",
+      "domain": "tailoring",
+      "elapsedMs": 1408,
+      "expectedTranslation": "इस वर्क के लिए आठ हज़ार बिल बना दो",
+      "mustPreserve": [
+        "8000"
+      ],
+      "model": "gemini-3.1-flash-lite",
+      "original": "இந்த வொர்க்குக்கு 8000 பில் போடு.",
+      "translation": "इस वर्क के लिए 8000 का बिल डाल।",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 380,
+        "audioTokens": 70,
+        "completionTokens": 35,
+        "costUsd": 0.000165
+      }
+    },
+    {
+      "file": "hi-01.wav",
+      "sourceLang": "hi",
+      "domain": "tailoring",
+      "elapsedMs": 1599,
+      "expectedTranslation": "மேம், இந்த வொர்க் போட மினிமம் 5 டேஸ் ஆகும்",
+      "mustPreserve": [
+        "5"
+      ],
+      "model": "gemini-3.1-flash-lite",
+      "original": "मैम इस वर्क को करने में मिनिमम 5 दिन लगेंगे।",
+      "translation": "மேம் இந்த வொர்க்கை முடிக்க மினிமம் 5 டேஸ் ஆகும்.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 460,
+        "audioTokens": 150,
+        "completionTokens": 38,
+        "costUsd": 0.0002095
+      }
+    },
+    {
+      "file": "hi-02.wav",
+      "sourceLang": "hi",
+      "domain": "general",
+      "elapsedMs": 1570,
+      "expectedTranslation": "மேம், நைட் வொர்க் பண்றது கஷ்டம் மேம், நாளைக்கு அர்லி மார்னிங் வரேன்",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "मैम नाइट वर्क करना मुश्किल है, कल अर्ली मॉर्निंग आ जाऊंगा।",
+      "translation": "மேம் நைட் வொர்க் பண்றது கஷ்டம், நாளைக்கு ஏர்லி மார்னிங் வந்துடுறேன்.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 443,
+        "audioTokens": 133,
+        "completionTokens": 51,
+        "costUsd": 0.0002205
+      }
+    },
+    {
+      "file": "hi-03.wav",
+      "sourceLang": "hi",
+      "domain": "tailoring",
+      "elapsedMs": 1952,
+      "expectedTranslation": "இந்த பிளவுஸ்க்கு ரெட் ஸ்டோன், கோல்ட் ஜரி யூஸ் பண்ணா நல்லா இருக்கும்",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "इस ब्लाउज के लिए रेड स्टोन और गोल्ड ज़री यूज़ करें तो अच्छा रहेगा।",
+      "translation": "இந்த பிளவுஸ்க்கு ரெட் ஸ்டோன் அப்புறம் கோல்ட் ஜரி யூஸ் பண்ணா நல்லா இருக்கும்.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 445,
+        "audioTokens": 135,
+        "completionTokens": 53,
+        "costUsd": 0.0002245
+      }
+    },
+    {
+      "file": "hi-04.wav",
+      "sourceLang": "hi",
+      "domain": "tailoring",
+      "elapsedMs": 1929,
+      "expectedTranslation": "ஃபோட்டோல இந்த டிசைன் கிளியரா தெரியல, கஸ்டமர்கிட்ட நல்ல ஃபோட்டோ கேளுங்க",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "फोटो में यह डिजाइन क्लियर नहीं दिख रहा है, कस्टमर से अच्छी फोटो मांग लिए।",
+      "translation": "போட்டோல இந்த டிசைன் கிளியரா தெரியல, கஸ்டமர் கிட்ட நல்ல போட்டோ கேளுங்க.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 465,
+        "audioTokens": 155,
+        "completionTokens": 50,
+        "costUsd": 0.00023
+      }
+    },
+    {
+      "file": "hi-05.wav",
+      "sourceLang": "hi",
+      "domain": "tailoring",
+      "elapsedMs": 1636,
+      "expectedTranslation": "ப்ளூ கலர் கட் பீட் தீர்ந்துடுச்சு, நாளைக்கு வாங்கிட்டு வாங்க",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "Blue color cut piece khatam ho gaya hai, kal lekar aaiye.",
+      "translation": "Blue color cut piece mudinjiduchu, naalaiku eduthuttu vaanga.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": true,
+      "usage": {
+        "promptTokens": 443,
+        "audioTokens": 133,
+        "completionTokens": 42,
+        "costUsd": 0.000207
+      }
+    },
+    {
+      "file": "hi-06.wav",
+      "sourceLang": "hi",
+      "domain": "tailoring",
+      "elapsedMs": 1686,
+      "expectedTranslation": "நெக்ஸ்ட் வொர்க்குக்கு மார்க் பண்ணி கொடுங்க",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "Next work ke liye mark karke dijiye.",
+      "translation": "Next work-ku mark panni kudunga.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": true,
+      "usage": {
+        "promptTokens": 421,
+        "audioTokens": 111,
+        "completionTokens": 28,
+        "costUsd": 0.000175
+      }
+    },
+    {
+      "file": "hi-07.wav",
+      "sourceLang": "hi",
+      "domain": "tailoring",
+      "elapsedMs": 1690,
+      "expectedTranslation": "டிசைன் ட்ரேஸ் பண்ண ஸ்டார்ட் பண்றேன், ஏதும் சேஞ்ச் இல்லையே?",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "Design trace karna start kar raha hoon, koi change toh nahi hai na?",
+      "translation": "Design trace panna start panren, edhavadhu change illa la?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": true,
+      "usage": {
+        "promptTokens": 453,
+        "audioTokens": 143,
+        "completionTokens": 38,
+        "costUsd": 0.000206
+      }
+    },
+    {
+      "file": "hi-08.wav",
+      "sourceLang": "hi",
+      "domain": "tailoring",
+      "elapsedMs": 1962,
+      "expectedTranslation": "இந்த டிசைன்ல ஸ்மால் ஸ்டோன் யூஸ் பண்ணணுமா, பெரிய ஸ்டோன் யூஸ் பண்ணணுமா?",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "इस डिजाइन में छोटा स्टोन यूज करना है या बड़ा स्टोन यूज करना है?",
+      "translation": "இந்த டிசைன்ல சின்ன ஸ்டோன் யூஸ் பண்ணனுமா இல்ல பெரிய ஸ்டோன் யூஸ் பண்ணனுமா?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 444,
+        "audioTokens": 134,
+        "completionTokens": 49,
+        "costUsd": 0.000218
+      }
+    },
+    {
+      "file": "hi-09.wav",
+      "sourceLang": "hi",
+      "domain": "general",
+      "elapsedMs": 1757,
+      "expectedTranslation": "நாளைக்கு வொர்க் இருக்கா?",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "क्या कल काम है?",
+      "translation": "நாளைக்கு வேலை இருக்கா?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 395,
+        "audioTokens": 85,
+        "completionTokens": 19,
+        "costUsd": 0.0001485
+      }
+    },
+    {
+      "file": "hi-10.wav",
+      "sourceLang": "hi",
+      "domain": "general",
+      "elapsedMs": 1627,
+      "expectedTranslation": "நான் சண்டே வந்து வொர்க் முடிச்சு கொடுத்துடறேன்",
+      "mustPreserve": [
+        "Sunday"
+      ],
+      "model": "gemini-3.1-flash-lite",
+      "original": "मैं संडे को आकर काम खत्म करके दे दूंगा।",
+      "translation": "நான் சண்டே வந்து வொர்க் முடிச்சு கொடுத்துடுறேன்.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 428,
+        "audioTokens": 118,
+        "completionTokens": 33,
+        "costUsd": 0.000186
+      }
+    },
+    {
+      "file": "hi-11.wav",
+      "sourceLang": "hi",
+      "domain": "general",
+      "elapsedMs": 2044,
+      "expectedTranslation": "சரி மேம்",
+      "mustPreserve": [],
+      "model": "gemini-3.1-flash-lite",
+      "original": "ठीक है मैम।",
+      "translation": "சரி மேம்.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 395,
+        "audioTokens": 85,
+        "completionTokens": 15,
+        "costUsd": 0.0001425
+      }
+    },
+    {
+      "file": "hi-12.wav",
+      "sourceLang": "hi",
+      "domain": "general",
+      "elapsedMs": 1702,
+      "expectedTranslation": "ம்ம்ம், ஒரு அஞ்சு மணி நேரம் ஆகும் மேம்",
+      "mustPreserve": [
+        "5"
+      ],
+      "model": "gemini-3.1-flash-lite",
+      "original": "पांच घंटे लगेंगे मैम।",
+      "translation": "அஞ்சு மணி நேரம் ஆகும் மேம்.",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": false,
+      "usage": {
+        "promptTokens": 405,
+        "audioTokens": 95,
+        "completionTokens": 20,
+        "costUsd": 0.000155
+      }
+    },
+    {
+      "file": "hi-13.wav",
+      "sourceLang": "hi",
+      "domain": "general",
+      "elapsedMs": 1738,
+      "expectedTranslation": "ஆயிரம் ரூபா சார்ஜ் பண்ணலாம் மேம்",
+      "mustPreserve": [
+        "1000"
+      ],
+      "model": "gemini-3.1-flash-lite",
+      "original": "1000 charge kar sakte hain mam?",
+      "translation": "1000 charge panna mudiyuma mam?",
+      "mustPreservePass": true,
+      "mustPreserveMissing": [],
+      "romanized": true,
+      "usage": {
+        "promptTokens": 406,
+        "audioTokens": 96,
+        "completionTokens": 29,
+        "costUsd": 0.000169
+      }
+    }
+  ]
+}

@@ -116,6 +116,17 @@ silently work around it.
    looks more "correct"; it is a failure here, because the listener won't
    understand it.
 
+   **Implementation note (2026-08-24) — transliteration trigger.** The
+   transliterator (`lib/transliterate.ts`, wired into `/api/translate`
+   behind `needsTransliteration`) fires only when the translated text
+   contains zero target-script characters and at least one Latin letter —
+   a Latin loanword sitting inside otherwise-correct target script does
+   not trigger it; only a translation that has gone (fully or mostly)
+   romanised does. On transliterator failure or timeout, the
+   untransliterated text is used rather than failing the turn. This
+   trigger condition is to be revisited at beta using logged trigger-rate
+   data from real use.
+
 6. **Audio-only interface.** The product is spoken: the two parties talk and
    listen, they do not read the screen. On-screen text (transcription,
    translation) is a debugging aid only, never a feature — and it must not drive
