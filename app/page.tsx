@@ -107,8 +107,15 @@ function parseTranslitDebug(x: unknown): { triggered: boolean; ms: number | null
  * timing marks (requestSentMs/responseReadMs/playCalledMs/gateReleasedMs) are
  * ALL client-clock (performance.now()) — same rule as the translate-leg
  * marks above: never combined with any server-reported duration.
+ *
+ * `translit` is the parsed transliteration debug for this turn, if any —
+ * same component-state-keyed-by-turn-id pattern as `ttsResult`.
  */
-function exportTurn(t: Turn, ttsResult?: PlaybackResult) {
+function exportTurn(
+  t: Turn,
+  ttsResult?: PlaybackResult,
+  translit?: { triggered: boolean; ms: number | null } | null,
+) {
   if (t.status === "gated") {
     // A gate trip never became a turn — export just the evidence whichever
     // check (duration or energy) acted on, not the request/timing shape of a
@@ -153,6 +160,7 @@ function exportTurn(t: Turn, ttsResult?: PlaybackResult) {
       : null,
     server: tm?.server ?? null,
     transportMs: tm ? transportMs(tm) : null,
+    transliteration: translit ?? null,
     tts: !ttsResult
       ? null
       : ttsResult.ok
@@ -486,7 +494,7 @@ export default function Home() {
     const payload = {
       exportedAt: new Date().toISOString(),
       userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
-      turns: [...turns].reverse().map((t) => exportTurn(t, ttsResults[t.id])),
+      turns: [...turns].reverse().map((t) => exportTurn(t, ttsResults[t.id], translitDebug[t.id])),
     };
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
