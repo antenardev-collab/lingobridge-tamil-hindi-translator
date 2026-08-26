@@ -169,6 +169,7 @@ function exportTurn(
             requestSentMs: Math.round(ttsResult.requestSentMs),
             responseReadMs: Math.round(ttsResult.responseReadMs),
             playCalledMs: Math.round(ttsResult.playCalledMs),
+            playingMs: ttsResult.playingMs !== null ? Math.round(ttsResult.playingMs) : null,
             gateReleasedMs: Math.round(ttsResult.gateReleasedMs),
           }
         : {
@@ -641,6 +642,11 @@ export default function Home() {
                             via exportTurn's `tts` field above. */}
                         {ttsResult && !ttsResult.ok && (
                           <div className="turn-timing">⚠ tts: {ttsFailureLabel(ttsResult)}</div>
+                        )}
+                        {ttsResult && ttsResult.ok && ttsResult.playingMs !== null && (
+                          <div className="turn-timing">
+                            tts: playing {Math.round(ttsResult.playingMs)} ms
+                          </div>
                         )}
                         {xlit && (
                           <div className="turn-timing">

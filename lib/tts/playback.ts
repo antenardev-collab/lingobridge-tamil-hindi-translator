@@ -83,6 +83,14 @@ export interface PlaybackSuccess {
    * than `playCalledMs` by roughly playback duration + UNMUTE_DELAY_MS.
    */
   gateReleasedMs: number;
+  /**
+   * entry -> playback actually starting (the audio element's `playing`
+   * event) — the closest available signal to real audio onset, later than
+   * `playCalledMs` by however long the browser took to actually begin
+   * rendering frames. `null` in the unexpected case where `playing` never
+   * fired before `ended` did.
+   */
+  playingMs: number | null;
 }
 
 /**
@@ -257,6 +265,8 @@ export async function speak(
     // which is worse than one failed turn. The same guard means this
     // promise also resolves exactly once.
     let claimed = false;
+    // Set once, by whichever fires first — see the `onplaying` handler below.
+    let playingMs: number | null = null;
 
     function cleanupUrl() {
       URL.revokeObjectURL(url);
@@ -306,6 +316,14 @@ export async function speak(
       }, UNMUTE_DELAY_MS);
     }
 
+    // The `playing` event fires when playback actually begins — the
+    // standard, spec-named signal for real audio onset, closer to it than
+    // play()'s own promise resolving (see the comment on that `.then()`
+    // below). Recording-only: does not arm or touch the watchdog.
+    audio.onplaying = () => {
+      if (playingMs === null) playingMs = performance.now() - entry;
+    };
+
     // Resets the watchdog on every sign of genuine progress. Fires roughly
     // four times a second while audio is actually advancing — comfortably
     // inside PLAYBACK_STALL_MS, so a real stall of any kind (not just a
@@ -327,6 +345,7 @@ export async function speak(
         requestSentMs,
         responseReadMs,
         playCalledMs,
+        playingMs,
         gateReleasedMs,
       }));
     };
