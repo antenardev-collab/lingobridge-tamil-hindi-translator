@@ -98,9 +98,34 @@ silently work around it.
    describes. **Decision 2 stands exactly as written** — the earlier caveat
    here no longer applies.
 
-3. **Latency beats model quality.** A 5-second pause kills a real conversation.
-   Prefer fast mid-tier multimodal models (Gemini Flash class) over frontier
-   models. Target under 2s from release-to-speak.
+3. **Latency beats model quality.** When latency and model quality conflict,
+   latency wins — unchanged and still binding. This is the tiebreaker that
+   selected ElevenLabs over Gemini TTS, rejected retry-on-timeout, and
+   parked response streaming.
+
+   **Amended (2026-08-27) — the under-2s release-to-speak target is
+   removed, not replaced.** It was never met and was picked by feel, not
+   measured. **No numeric latency target is currently in force.**
+   Release-to-audible is measured but not yet bounded; a bound will be set
+   from beta data across multiple sessions, devices, and networks — never
+   from any single session. See `docs/PLAN.md`'s Slice 4d open item on
+   release-to-audible session variance for the full data behind this.
+
+   **Measurement, fixed so future figures are comparable:**
+   release-to-audible = `encodeMs + roundTripMs + playingMs`, where
+   `playingMs` is stamped from the `onplaying` DOM event
+   (`lib/tts/playback.ts`). This covers successful turns only — a failed
+   turn is excluded, so the figure is not the experienced distribution.
+
+   **Why no number is in force:** two real-device sessions on the same
+   code, hours apart on 2026-08-26, gave p50 3018ms / p90 3392ms and p50
+   ~4200ms / p90 ~6100ms. Setting a target from either would repeat the
+   error being corrected here.
+
+   **One working constraint survives without being a formal target:** a
+   turn that will fail should fail well inside roughly 4 seconds, so the
+   person can ask again rather than wait. This is a design constraint, not
+   a measured bound — it is why retry-on-timeout was rejected.
 
 4. **Retain raw audio per turn in session memory** from slice 1 onward, keyed by
    which side was tapped. Slice 6 uses it for speaker enrollment. Keep it,
