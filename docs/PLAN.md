@@ -1191,6 +1191,28 @@ characters and at least one Latin letter.
 - **Device-verified.** Trigger fired on a real phone, output judged natural
   by a native Tamil speaker, no perceptible added latency.
 
+### Slice 4d — decision 3 amendment, clause 1 dropped (2026-08-24)
+
+**The proposed decision-3 amendment carries a latency target only.** The
+"release-to-first-feedback under ~300ms" clause floated alongside it (Real-
+device latency, above) is dropped, not deferred — it is not part of the
+amendment.
+
+- **Reasoning.** On a healthy turn the person currently hears nothing
+  between release and the translation speaking. A `…` placeholder appears
+  on screen within one paint (`app/page.tsx`), but decision 6 makes
+  on-screen text a debugging aid, never a feature, so it does not count as
+  feedback. Building an audible acknowledgement now would be solving a
+  problem no real user has reported.
+- **Revisit condition, explicit.** Revisit only if beta testers report that
+  they cannot tell whether a successful turn is working, or are confused
+  about whether the app heard them — not on our own judgement.
+- **Asymmetry, accepted deliberately.** Failure currently has audible
+  signalling across three tiers (`lib/failure-audio.ts`) while success has
+  none. This asymmetry is accepted deliberately, not overlooked.
+- **Reversal cost is low.** The failure-tier audio path already exists; a
+  success tone would reuse it rather than requiring new infrastructure.
+
 ---
 
 ## Slice 5 — Hands-free toggle
