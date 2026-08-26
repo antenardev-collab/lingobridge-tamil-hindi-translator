@@ -1213,6 +1213,38 @@ amendment.
 - **Reversal cost is low.** The failure-tier audio path already exists; a
   success tone would reuse it rather than requiring new infrastructure.
 
+### Slice 4d — deadline headroom raised, 1500 → 2500 (2026-08-26)
+
+**`DEADLINE_HEADROOM_MS` raised from 1500 to 2500** (`lib/deadline.ts`)
+after a real-device session produced 5 timeouts in 16 turns.
+`DEADLINE_BASE_MS` and `DEADLINE_PER_SEC_MS` are unchanged — they came
+from the measured longform-probe fit (Slice 4d step 1, above) and still
+describe the median correctly.
+
+- **Judgement-picked, not derived.** The server-side abort censors the
+  very measurement needed to size the headroom properly: an aborted call
+  reports only that it exceeded the deadline, never by how much it would
+  have overshot. No mechanism exists to lengthen the deadline per request.
+- **Provider slowdown ruled out as the cause.** A 26-clip production eval
+  re-run the same day gave a median of 1772ms against the 1696ms baseline
+  measured three days earlier — a 76ms shift, not the kind of drift that
+  would explain a timeout spike.
+- **Verified: 12 real-device turns, 0 failures** under the new constant.
+  Two turns would have failed under the OLD constant — translate legs of
+  3386ms and 2985ms against old deadlines of 2528ms and 2495ms
+  respectively. The 3386ms turn cleared the NEW deadline by only 142ms,
+  so 2500 is close to the minimum that works, not a generous margin.
+- **Direction hypothesis tested and rejected.** Timeouts were suspected of
+  skewing toward one source language; failures in fact occur on both
+  sides. An earlier export's all-`ta` pattern was confounded with sample
+  size and time of session, not a real direction effect.
+- **Correction to an earlier assumption.** Flat headroom does NOT
+  under-serve short audio specifically — the per-second term is already
+  part of the predicted median, and headroom sits flat at every length on
+  top of it. Per-clip IQRs of 160–806ms (Slice 4d step 1, above) suggest
+  jitter actually grows with duration, which would mean flat headroom
+  under-serves long audio instead, if anything.
+
 ---
 
 ## Slice 5 — Hands-free toggle
@@ -1456,6 +1488,64 @@ of different Indian languages.
   the shape that produces the known ElevenLabs word-boundary slur (see the
   ElevenLabs evaluation notes, above). Previously only a hypothesised
   shape; now confirmed from real turns.
+
+- **Whole English clauses pass through untranslated — real-turn evidence,
+  revisit after Slice 6 (2026-08-26).** Observed across two real-device
+  sessions: entire English clauses in the source are reproduced verbatim in
+  the output instead of being translated. Examples: "everything will be
+  alright soon", "don't overcomplicate simple things", "Why are you so
+  silent today?", "We can plan", "Long drive".
+  - **Not caused by the transliteration gate.** `needsTransliteration`
+    correctly returned `false` on every one of these turns — target script
+    was already present, so the transliterator never triggered.
+  - **Hypothesis, consistent across every observed turn but untested
+    beyond them:** the model mirrors whatever script the English arrived
+    in. English transcribed in Latin comes back in Latin; English
+    transcribed in Tamil script comes back in Devanagari — e.g. `வாட் ஆர்
+    யூ சோ` → `व्हाट आर यू सो`, `ஆர் யூ இக்னோரிங் மீ` → `आर यू इग्नोरिंग
+    मी`, `தட் இஸ் அப்சல்யூட்லி` from `दैट इस अब्सोल्युटली`.
+  - **Worse than described when the trigger predicate was locked.** This
+    is the mixed-sentence gap already accepted at that point (Slice 4d
+    item 1 closed, above), now with real-turn evidence — but the
+    consequence is worse than stated then: a listener who doesn't speak
+    English hears untranslated English outright, not merely imperfect
+    target-language output.
+  - **Interacts with decision 5** (keep shared English loanwords), applied
+    here at clause level rather than word level. Needs a native Hindi
+    speaker to judge whether the preserved English is acceptable or a
+    comprehension failure.
+- **`requestSentMs` (`lib/tts/playback.ts`) is misnamed, and the TTS leg
+  slowed unexplained (2026-08-26).** Confirmed by direct inspection: it is
+  stamped after `await fetch("/api/tts")` resolves, so it measures
+  response-received, not request-sent — the elapsed time itself is real,
+  only the name is wrong. This supersedes and confirms the earlier
+  "timing-mark ambiguity" note (Real-device latency, above).
+  - **Consequence:** `responseReadMs - requestSentMs` is body-read time,
+    not the API call itself.
+  - **Observed regression.** Across all earlier sessions this value ran
+    455–921ms. In the 2026-08-26 evening session it ran 1474–2654ms on
+    every turn, while ElevenLabs' own response time after the request went
+    out was unchanged at roughly 120–350ms.
+  - **Ruled out:** the deadline-headroom change (above) cannot affect the
+    TTS leg; translate-leg transport was unchanged at ~800–1000ms; turns
+    were 14–36s apart, so overlapping `speak()` calls are not the cause.
+  - **Not explained.** Most likely a transient at the provider. Unverified.
+  - **Also recorded: `speak()` calls are not serialised.**
+    `speakTranslation` is invoked as `void speakTranslation(...)`
+    (fire-and-forget), and `speakingId` only disables new captures via a
+    prop — it does not prevent a second `speak()` starting while a first
+    is still in flight. Not observed in practice, but no lock exists.
+- **Release-to-audible varies too much across sessions to set a target
+  (2026-08-26).** Measured as `encodeMs + roundTripMs + playingMs`, where
+  `playingMs` comes from the `onplaying` DOM event (`lib/tts/playback.ts`).
+  - Morning session, 11 successful turns: p50 ≈ 3018ms, p90 ≈ 3392ms,
+    worst 3729ms.
+  - Evening session, 12 successful turns: p50 ≈ 4200ms, p90 ≈ 6100ms.
+  - Same code, hours apart. The proposed decision-3 amendment clauses — p50
+    under 3s, p90 under 4s — pass against the morning session and fail
+    against the evening one. Both figures cover successful turns only.
+  - **Decision 3's amendment therefore cannot be written from either
+    session alone.**
 
 ## Session hygiene
 
