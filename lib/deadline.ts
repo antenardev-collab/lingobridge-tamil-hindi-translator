@@ -14,7 +14,7 @@
  */
 export const DEADLINE_BASE_MS = 795;
 export const DEADLINE_PER_SEC_MS = 64;
-export const DEADLINE_HEADROOM_MS = 1500;
+export const DEADLINE_HEADROOM_MS = 2500;
 /** Used when duration can't be parsed or is outside the plausible range —
  * degrading toward a long wait is safer than aborting a healthy turn on an
  * unparsed duration. */
