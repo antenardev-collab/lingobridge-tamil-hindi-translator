@@ -211,45 +211,6 @@ export async function POST(req: Request) {
     deadlineSource = hinted.deadlineSource === "measured" ? "client-hint" : "fallback";
   }
 
-  // TODO(remove-before-beta): Slice 4d temporary test affordance, NOT part
-  // of the real timeout path below. Fires ONLY on the exact string "1" in
-  // the `forceTimeout` form field, so it cannot trigger accidentally from a
-  // missing field, an empty string, or any other value. The real timeout
-  // has not fired in 105 probe requests, so this exists to make the 504
-  // path and the failure sounds (lib/failure-audio.ts) reachable on demand
-  // on a real phone, without spending a Gemini call to do it. Skips the
-  // pipeline entirely, waits out the same computed deadline, then returns
-  // the identical 504 shape (error/detail/debug) the real abort path
-  // produces below — deliberately duplicated rather than shared, so this
-  // block can be deleted outright before shop testing without touching the
-  // real failure branches at all.
-  if (form.get("forceTimeout") === "1") {
-    await new Promise((resolve) => setTimeout(resolve, deadlineMs));
-    const exit = performance.now();
-    const debug = buildDebug(
-      entry,
-      exit,
-      coldStart,
-      execRegion,
-      edgeTrace,
-      null,
-      undefined,
-      audioDurationSec,
-      deadlineMs,
-      deadlineSource,
-    );
-    return NextResponse.json(
-      {
-        error: "translation timed out",
-        detail:
-          `deadline ${deadlineMs}ms applied (source: ${deadlineSource}) for audio duration ` +
-          `${audioDurationSec ?? "unknown"}s`,
-        debug,
-      },
-      { status: 504 },
-    );
-  }
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
 
