@@ -85,6 +85,19 @@ silently work around it.
    utterances ("சரி", "haan", numbers, names) and on code-mixed speech, which is
    constant in this population.
 
+   **Amended (2026-08-28) — Slice 6 introduces detection, hands-free mode
+   only.** Tap-to-talk with speaker-selected language remains the locked
+   default and the shipping configuration through Slice 5. Slice 6 adds a
+   hands-free mode that uses language detection instead, constrained to a
+   two-way Tamil-or-Hindi choice, with that language hint supplied to the
+   model on every turn (`docs/PLAN.md` → Slice 6). Tap-to-talk must remain
+   available and take priority whenever both are possible. Detection is
+   confined to hands-free mode — it does not replace speaker selection
+   anywhere else. Auto-detection accuracy has never been measured; the
+   experiment is owed before hands-free can be trusted. **If hands-free
+   cannot be made reliable, this amendment is reverted and decision 1 stands
+   as originally written.**
+
 2. **Echo loop is solved by muting the mic, not by classifying audio.** We
    control TTS playback, so we know when the machine is speaking. Hard-gate the
    mic on `play()`, unmute on `ended` plus a 250ms reverb tail. Never try to

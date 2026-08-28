@@ -1247,7 +1247,79 @@ describe the median correctly.
 
 ---
 
-## Slice 5 — Hands-free toggle
+## Slice 5 — English fix + voice cloning
+
+### Item 1 — whole English clauses passing through untranslated
+
+**Whole English clauses pass through untranslated — real-turn evidence,
+scheduled work for this slice (2026-08-28; previously an open item marked
+"revisit after Slice 6").** Observed across two real-device sessions: entire
+English clauses in the source are reproduced verbatim in the output instead
+of being translated. Examples: "everything will be alright soon", "don't
+overcomplicate simple things", "Why are you so silent today?", "We can
+plan", "Long drive".
+
+- **Not caused by the transliteration gate.** `needsTransliteration`
+  correctly returned `false` on every one of these turns — target script
+  was already present, so the transliterator never triggered.
+- **Hypothesis, consistent across every observed turn but untested beyond
+  them:** the model mirrors whatever script the English arrived in. English
+  transcribed in Latin comes back in Latin; English transcribed in Tamil
+  script comes back in Devanagari — e.g. `வாட் ஆர் யூ சோ` → `व्हाट आर यू सो`,
+  `ஆர் யூ இக்னோரிங் மீ` → `आर यू इग्नोरिंग मी`, `தட் இஸ் அப்சல்யூட்லி` from
+  `दैट इस अब्सोल्युटली`.
+- **Worse than described when the trigger predicate was locked.** This is
+  the mixed-sentence gap already accepted at that point (Slice 4d item 1
+  closed, above), now with real-turn evidence — but the consequence is
+  worse than stated then: a listener who doesn't speak English hears
+  untranslated English outright, not merely imperfect target-language
+  output.
+- **Interacts with decision 5** (keep shared English loanwords), applied
+  here at clause level rather than word level. Needs a native Hindi speaker
+  to judge whether the preserved English is acceptable or a comprehension
+  failure.
+
+### Item 2 — voice cloning, concept test only
+
+**Goal: establish whether the concept works, not productise it.** Two fixed
+cloned voices only — Anten's and his brother-in-law's. No user profiles, no
+enrollment, no per-user voices.
+
+- **No database or storage required.** ElevenLabs holds the cloned voice;
+  the app stores only a `voice_id` string per speaker. A `voice_id` is a
+  plain string that needs no storage layer of its own — the two cloned ids
+  are added as hardcoded entries to the same `VOICE_IDS` table
+  (`lib/tts/elevenlabs.ts`) the four current stock voices (Janani, Rajan,
+  Anjali, Rohit) are already hardcoded into, the same way those four are.
+  Source audio is used once at clone creation and does not need to be
+  retained.
+- **Voice selection must invert.** Today `synthesiseSpeech(text, targetLang,
+  gender)` picks a voice by target language. With cloning the voice is
+  determined by WHO SPOKE, not by what language is produced: the Tamil
+  speaker's clone renders Hindi output, the Hindi speaker's clone renders
+  Tamil output. `language_code` becomes the only signal telling ElevenLabs
+  which language a voice trained on one language should produce.
+- **The open question is cross-lingual quality, not whether cloning
+  works.** IVC does not train a model; it conditions on the sample at
+  inference. Its documented weakness is voices or accents underrepresented
+  in training. A Chennai-accented Tamil voice asked to produce Hindi is
+  exactly that case.
+- **Account capability confirmed 2026-08-28** via `GET
+  /v1/user/subscription` on the key in `.env.local`: tier `starter`,
+  `can_use_instant_voice_cloning: true`,
+  `can_use_professional_voice_cloning: false`, `voice_limit: 10`,
+  `max_voice_add_edits: 65` with 0 used.
+- **Risk to record.** PVC is the documented fallback when IVC struggles with
+  an unfamiliar accent, and it is not available on this plan. A poor result
+  therefore cannot distinguish "voice cloning does not work here" from "IVC
+  specifically does not work here" without a plan upgrade.
+- **Consent from the brother-in-law is required** before creating his
+  clone — ElevenLabs requires confirming the right to clone a voice at
+  creation time.
+
+---
+
+## Slice 6 — Hands-free toggle
 
 **The risky slice.** Everything before this is your fallback.
 
@@ -1260,11 +1332,63 @@ describe the median correctly.
 
 **Done when:** it survives 10 minutes in a noisy room without a runaway loop.
 Tune VAD against recordings from the actual environment. If it can't be made
-reliable, ship slices 1–4 and say so.
+reliable, ship what came before and say so.
+
+### Anten's design, recorded as intent (2026-08-28)
+
+- Two language dropdowns, one per side — locked for the POC, user-changeable
+  in the real app.
+- No press-to-talk button. A voice-frequency waveform animation responds to
+  the speaker's audio instead.
+- Half-duplex: the mic is hard-gated during playback and reopens when
+  playback completes. The mic opens when the app opens and closes when the
+  app closes.
+- Language routing is by detection, with the constraint that the answer is
+  always either Tamil or Hindi, and that hint must reach the model on every
+  turn.
+
+**Risks:**
+
+- **Amends locked decision 1.** See the CLAUDE.md amendment to decision 1.
+- **Auto-detection accuracy has never been measured**, and the fabrication
+  finding — no-speech input returns confident invented sentences regardless
+  of prompt rules (Slice 2 prompt-edit subsection, above) — becomes
+  materially more dangerous with an always-open mic. The client-side capture
+  gate (duration and energy) is the only defence, and
+  `MIN_TURN_RMS_DBFS = -42` was calibrated for tap-to-talk, not continuous
+  capture.
 
 ---
 
-## Slice 6 — Speaker attribution
+## Beyond the POC (native rebuild / beta) — NOT POC work, deferred deliberately
+
+- **Guard-trip records must eventually persist permanently, with audio and
+  translation attached — not just text.** 4b's guard-trip log (text-only,
+  in-session, no persistence, no database) is a POC-scoped placeholder, not
+  the end state.
+- **All conversations — not only tripped ones — must eventually be recorded
+  and persisted with audio.** Reasoning: the `ஐயாயிரம்` → `ஐயா` class of
+  failure (Slice 3 findings) produces **no guard trip at all** — the
+  transliterator sees perfectly valid text and every guard passes, because
+  the number was already destroyed one stage upstream, in the audio-in
+  transcription itself, before translation or transliteration ever ran. Text
+  logging — however complete — cannot catch that class of failure; only the
+  retained audio can. This is why guard-trip audio alone would be
+  insufficient and full-conversation audio persistence is the actual
+  requirement, not a nice-to-have.
+- **Both need a storage backend the POC doesn't have.** Vercel functions are
+  stateless; this project has no database (see CLAUDE.md — session state is
+  React memory only). Deferred deliberately to beta, not forgotten.
+
+### Speaker attribution — parked, out of POC scope (2026-08-28)
+
+**Parked for the real app; not POC work.** Fixed cloned voices (Slice 5,
+above) remove the output-side need for speaker attribution — which voice
+speaks is now determined by whose clone is used, not by recognising who is
+talking. The Slice 6 hands-free design also routes language by detection
+rather than by speaker identity. Speaker attribution therefore has no
+remaining use inside POC scope; its existing content moves here as a future
+item for the real (post-POC) app rather than being deleted.
 
 > Add speaker enrollment. During normal tap-to-talk use, build a voice embedding
 > per side from the stored session audio. In hands-free mode, use speaker
@@ -1290,11 +1414,15 @@ doesn't depend on how good gender inference turns out to be (see the next
 item).
 
 **Neither language nor gender auto-detection accuracy has ever been
-measured.** Locked decision 1 (CLAUDE.md) rejects language auto-detection on
+measured.** Locked decision 1 (CLAUDE.md) rejected language auto-detection on
 interaction-design grounds — split-screen tap eliminates misdetection on
 short utterances and code-mixed speech by never guessing in the first place.
-The same reasoning was extended to gender above (a registration-time choice,
-not inference). **Record explicitly: decision 1 was an up-front
+(Decision 1 was subsequently amended, 2026-08-28, to permit detection inside
+Slice 6's hands-free mode specifically — see CLAUDE.md. That amendment does
+not revive speaker attribution: hands-free routes by content-detected
+language, not by recognising which enrolled speaker is talking.) The same
+reasoning was extended to gender above (a registration-time choice, not
+inference). **Record explicitly: decision 1 was an up-front
 interaction-design choice, not an empirical result** — it was never tested
 against a measured detection-accuracy baseline for either signal, because it
 doesn't need one to be correct. An accuracy experiment (language and gender
@@ -1306,28 +1434,6 @@ ownership-token fix (`CaptureEngine`, above) that prevents a simultaneous
 hold on both halves from sending one speaker's audio under the other's
 `sourceLang` — properties a content-based detector would have to solve
 separately, not side effects of getting language detection right.
-
----
-
-## Beyond the POC (native rebuild / beta) — NOT POC work, deferred deliberately
-
-- **Guard-trip records must eventually persist permanently, with audio and
-  translation attached — not just text.** 4b's guard-trip log (text-only,
-  in-session, no persistence, no database) is a POC-scoped placeholder, not
-  the end state.
-- **All conversations — not only tripped ones — must eventually be recorded
-  and persisted with audio.** Reasoning: the `ஐயாயிரம்` → `ஐயா` class of
-  failure (Slice 3 findings) produces **no guard trip at all** — the
-  transliterator sees perfectly valid text and every guard passes, because
-  the number was already destroyed one stage upstream, in the audio-in
-  transcription itself, before translation or transliteration ever ran. Text
-  logging — however complete — cannot catch that class of failure; only the
-  retained audio can. This is why guard-trip audio alone would be
-  insufficient and full-conversation audio persistence is the actual
-  requirement, not a nice-to-have.
-- **Both need a storage backend the POC doesn't have.** Vercel functions are
-  stateless; this project has no database (see CLAUDE.md — session state is
-  React memory only). Deferred deliberately to beta, not forgotten.
 
 ### The calling feature — long-term product direction (intent captured 2026-08-22, not a commitment)
 
@@ -1358,6 +1464,12 @@ needed to add cloning later, only a different `voice_id` per speaker.
   is designed for continuous full-duplex audio... Treat the Live API as a
   separate architecture with that constraint to solve, not a swap into
   the current tap-to-talk design."
+
+**Decided (2026-08-28): a separate application, not part of this POC.**
+Anten has decided the calling and conference-calling features will ship as
+their own separate app, not as an extension of this one. The real-time-feel
+problem a 2–3 second translation lag creates on a live call belongs to that
+separate app — it is not a problem this POC needs to solve.
 
 **Target markets — stated intent, not a plan.** India first, Europe
 beyond the shop POC. The boutique is a test venue because that is where
@@ -1489,31 +1601,6 @@ of different Indian languages.
   ElevenLabs evaluation notes, above). Previously only a hypothesised
   shape; now confirmed from real turns.
 
-- **Whole English clauses pass through untranslated — real-turn evidence,
-  revisit after Slice 6 (2026-08-26).** Observed across two real-device
-  sessions: entire English clauses in the source are reproduced verbatim in
-  the output instead of being translated. Examples: "everything will be
-  alright soon", "don't overcomplicate simple things", "Why are you so
-  silent today?", "We can plan", "Long drive".
-  - **Not caused by the transliteration gate.** `needsTransliteration`
-    correctly returned `false` on every one of these turns — target script
-    was already present, so the transliterator never triggered.
-  - **Hypothesis, consistent across every observed turn but untested
-    beyond them:** the model mirrors whatever script the English arrived
-    in. English transcribed in Latin comes back in Latin; English
-    transcribed in Tamil script comes back in Devanagari — e.g. `வாட் ஆர்
-    யூ சோ` → `व्हाट आर यू सो`, `ஆர் யூ இக்னோரிங் மீ` → `आर यू इग्नोरिंग
-    मी`, `தட் இஸ் அப்சல்யூட்லி` from `दैट इस अब्सोल्युटली`.
-  - **Worse than described when the trigger predicate was locked.** This
-    is the mixed-sentence gap already accepted at that point (Slice 4d
-    item 1 closed, above), now with real-turn evidence — but the
-    consequence is worse than stated then: a listener who doesn't speak
-    English hears untranslated English outright, not merely imperfect
-    target-language output.
-  - **Interacts with decision 5** (keep shared English loanwords), applied
-    here at clause level rather than word level. Needs a native Hindi
-    speaker to judge whether the preserved English is acceptable or a
-    comprehension failure.
 - **`requestSentMs` (`lib/tts/playback.ts`) is misnamed, and the TTS leg
   slowed unexplained (2026-08-26).** Confirmed by direct inspection: it is
   stamped after `await fetch("/api/tts")` resolves, so it measures
