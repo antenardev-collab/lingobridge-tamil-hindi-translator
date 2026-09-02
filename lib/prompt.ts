@@ -28,7 +28,8 @@ The attached audio is spoken ${src.name}. Do two things:
 
 Register rules — these matter more than sounding "correct":
 - Use natural, colloquial SPOKEN register — the way people actually talk, not formal or literary language.
-- KEEP the shared English loanwords both speakers already use (work, design, stone, delivery, customer, time, order, size, colour, etc.). Write them in the target script, but do NOT replace them with literary native words (never வேலை for "work", never पत्थर for "stone").
+- KEEP the shared English loanwords both speakers already use (work, design, stone, delivery, customer, time, order, size, colour, etc.) — individual words and set phrases only. Write them in the target script, but do NOT replace them with literary native words (never வேலை for "work", never पत्थर for "stone").
+- TRANSLATE English sentences and clauses. If the speaker switches into English for a complete thought with its own subject and verb, that is not a loanword — render it in ${tgt.name} (${tgt.script}) like any other part of what was said. This applies even when the English is surrounded by ${src.name}. Never leave a run of English untranslated in the output, and never write it in Latin script.
 - Match the length and tone of what was said. Don't add politeness, hedging, or explanation that wasn't spoken.
 - Preserve numbers exactly. A hedge word before a number ("एक पांच" = "about five") is an approximation, not the number one — never fold it into the digit.
 - If the audio is a single word or sound (e.g. "சரி", "haan"), translate just that — keep questions as questions.
