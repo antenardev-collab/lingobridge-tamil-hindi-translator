@@ -17,5 +17,13 @@ test-clips/eleven-probe-out/
 # Eval run outputs — timestamped, not worth committing
 eval-results/
 
+# Real device captures for the English-clause investigation — same reasoning
+# as test-clips/*.wav above (real people's voices, stays local); that rule is
+# directory-local and doesn't cover this subdirectory, hence a separate line.
+test-clips/english-clause/*.wav
+
+# scripts/english-clause-eval.mjs run outputs — timestamped, not worth committing
+test-clips/english-clause/baseline-*.json
+
 # TTS listening-eval audio — generated, and contains synthesized speech
 eval-audio/
