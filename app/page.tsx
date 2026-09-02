@@ -471,6 +471,37 @@ export default function Home() {
     if (!result.ok) registerFailure(sourceLang);
   }
 
+  // Debug-only (decision 6): save every retained turn's raw WAV audio to the
+  // device. `blob` is already the exact bytes posted to /api/translate — no
+  // conversion needed (locked decision 4 retains it per turn). Gated turns
+  // carry no audio and are skipped. `NN` is the 1-based index of the turn
+  // WITHIN `turns` (not within the downloadable subset), and `SHORTID` is the
+  // first 8 chars of the same `id` the timings export uses, so a saved file
+  // can be matched back to its export entry. A 300ms gap between saves is
+  // deliberate — mobile Chrome drops or throttles rapid sequential downloads.
+  async function downloadAllAudio() {
+    const entries = turns
+      .map((t, i) => ({ t, i }))
+      .filter((e): e is { t: CapturedTurn; i: number } => e.t.status !== "gated");
+    for (let n = 0; n < entries.length; n++) {
+      const { t, i } = entries[n];
+      const index = String(i + 1).padStart(2, "0");
+      const shortId = t.id.slice(0, 8);
+      const filename = `turn-${index}-${t.side}-${shortId}.wav`;
+      const url = URL.createObjectURL(t.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      if (n < entries.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+  }
+
   // Copy all accumulated turn timing as JSON for pasting out (Slice 4a). Debug
   // aid under decision 6. Newest first, so the most recent run is at the top.
   async function copyTimings() {
@@ -665,6 +696,18 @@ export default function Home() {
           aria-label="Copy turn timings as JSON"
         >
           {copied ? "copied ✓" : `copy timings (${turns.length})`}
+        </button>
+      )}
+      {turns.length > 0 && (
+        <button
+          type="button"
+          className="debug-copy"
+          style={{ top: 40 }}
+          onClick={downloadAllAudio}
+          disabled={!turns.some((t) => t.status !== "gated")}
+          aria-label="Download all retained turn audio as WAV files"
+        >
+          Download all audio
         </button>
       )}
       {micError && (
