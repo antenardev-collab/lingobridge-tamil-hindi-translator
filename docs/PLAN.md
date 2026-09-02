@@ -1279,6 +1279,94 @@ plan", "Long drive".
   to judge whether the preserved English is acceptable or a comprehension
   failure.
 
+### Item 1 outcome (2026-09-02) — resolved, partially, and accepted
+
+Fix shipped at `cc49dcc`, reverted-to and confirmed byte-identical at
+`fb8282b`. One bullet added to `buildInstruction` in `lib/prompt.ts`,
+immediately after the loanword bullet, instructing the model to translate
+English sentences and clauses rather than treat them as loanwords.
+
+- **Root cause: not a missing rule.** Two existing instructions —
+  transcribe exactly what was said, and keep shared English loanwords —
+  were jointly satisfied by passing a whole English clause through
+  untouched. The loanword rule had no upper bound on how much English
+  counts as a loanword.
+- **Measured on a purpose-built six-clip set** at
+  `test-clips/english-clause/` (WAVs gitignored, local only; runner is
+  `scripts/english-clause-eval.mjs`, committed at `cdccde0`). Baseline
+  captured before any prompt change and reproduced the defect exactly.
+- **Result at `cc49dcc`:** `48b940ad` fully fixed, all clauses translated,
+  zero Latin in output. `9e82ca75` five of six clauses fixed, and the Latin
+  leak into Tamil-script loanwords (`explain`, `fix`, `current analysis`)
+  eliminated. `59253045` not fixed — one clause survived.
+- **Accepted, not fully fixed.** Two surviving clauses both followed a
+  Tamil framing phrase meaning "let me tell you" (`உண்மைய சொல்லணும்னா`,
+  `நான் என்ன சொல்றேன்னா`); the model appears to treat what follows as
+  quoted speech. Anten's decision: leave it. A listener who does not
+  follow can ask the speaker to repeat in their language. Consistent with
+  the manageable-not-accurate bar.
+- **Cost accepted at `cc49dcc`:** some single-word loanwords are now
+  substituted with native Hindi against locked decision 5 — observed
+  `பட்`→`पर` (was `बट`), `அட்லீஸ்ட்`→`कम से कम` (was `एटलीस्ट`),
+  `ட்ரை`→`कोशिश` (was `ट्राई`), `வின்`→`जीते` (was `विन`), and
+  `தயவுசெய்து`→`कृपया` (was `प्लीज़`, a register drift). Judged
+  ugly-not-wrong and accepted.
+- **Numbers class intact across every round:** `NOC`, `5000`, `100%`
+  survived unchanged in all runs.
+- **Rejected: a second, broader rewrite (`df3eb60`, reverted).** Replacing
+  "English sentences and clauses" with "runs of two or more English words"
+  fixed all remaining clauses but caused substantially worse loanword
+  loss, including on a control clip that was correct at baseline:
+  `catchy`→`आकर्षक`, `landed`→`पहुंच गया`, `approach`→`संपर्क`,
+  `coordinated efforts`→`समन्वित प्रयास`, `current analysis`→
+  `वर्तमान विश्लेषण`. The last two are literary native substitutions of
+  exactly the kind decision 5 forbids. Damage scaled with how much
+  English was in the input, not with word-run length — indicating the
+  model applies the rule turn-globally rather than per-run. **Do not
+  re-propose a broader English-translation rule without new evidence.**
+- **Method note.** Temperature 0 reproduction was verified across
+  sessions and devices. Six clips re-sent from a laptop reproduced all
+  twelve `original`/`translation` strings from a phone session hours
+  earlier, character for character, including stammers and fillers.
+  Fixed WAV input is a reliable instrument for prompt work on this
+  pipeline, unlike the 26-clip corpus, which is a regression detector
+  only (see the Slice 2 prompt-edit subsection, above).
+
+### Scope correction — target languages (stated by Anten, 2026-09-02)
+
+- **The product is not Tamil↔Hindi.** The intended scope is all language
+  pairs supported by Gemini, selected by the user from an in-app
+  dropdown.
+- Tamil and Hindi are the currently fixed pair for the POC only, chosen
+  because that is where native validators are available. This is a POC
+  constraint, not the product definition.
+- Correspondingly, "Hindi-speaking migrant workers and Tamil speakers"
+  (CLAUDE.md's own framing) describes the current test population, not
+  the user base. Any framing narrower than general multilingual
+  conversation is drift and should be corrected.
+
+### Design debt exposed by Item 1 — English is hardcoded, languages are not (2026-09-02)
+
+- `buildInstruction` in `lib/prompt.ts` parameterises source and target
+  language via a `LANG` lookup keyed on `Side`, but English is written
+  into the prompt as literal prose — named in the loanword bullet,
+  illustrated with English examples, and named again in the clause
+  bullet added today.
+- This is correct for Tamil↔Hindi, where English is the shared loanword
+  source for both sides. It does not generalise. For an arbitrary
+  Gemini-supported pair the shared bridge language may be different or
+  may not exist.
+- **Locked decision 5 itself carries the same assumption:** "keep shared
+  English loanwords" presumes a bridge language shared by both speakers,
+  hardcoded as English.
+- **Consequence for the language dropdown:** the loanword rule and the
+  English-clause rule both require rework before multi-language
+  selection can ship. Recorded as a native-app design item, not POC
+  work.
+- **Related, untested:** behaviour when a speaker uses a third language
+  (French, Spanish, Mandarin) inside a Tamil turn is undefined — no
+  prompt rule covers it. Not tested; not scheduled.
+
 ### Item 2 — voice cloning, concept test only
 
 **Goal: establish whether the concept works, not productise it.** Two fixed
