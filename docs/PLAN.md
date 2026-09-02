@@ -1367,6 +1367,33 @@ English sentences and clauses rather than treat them as loanwords.
   (French, Spanish, Mandarin) inside a Tamil turn is undefined — no
   prompt rule covers it. Not tested; not scheduled.
 
+**Proposed generalisation — third-language rule. Anten, 2026-09-02.
+Design direction, untested.**
+
+- Replace the hardcoded reference to English with a computed role. Once
+  source and target are selected, any language appearing in the turn
+  that is neither of them is a third language, and the same handling
+  applies regardless of which language it is.
+- Handling, mirroring the behaviour accepted today: a lone
+  third-language word or two-word phrase is left as a loanword in
+  target script; a whole third-language sentence is translated; a
+  partial sentence is translated where the model can, and left as-is
+  where it cannot.
+- For the current Tamil↔Hindi pair this is behaviourally identical to
+  the shipped rule, since English is the third language there. It is a
+  generalisation, not a behaviour change.
+- **Open risk:** the loanword bullet currently carries hardcoded English
+  examples (`work`, `design`, `stone`, `customer`, etc.) and two
+  script-specific negative examples (`வேலை` for "work", `पत्थर` for
+  "stone"). These do not generalise under this rule. A generic version
+  would need the model to infer shared loanwords for the selected pair
+  without examples, and examples are typically load-bearing in this
+  prompt. Untested.
+- Recorded as a design direction for the native app and the language
+  dropdown, not as a specification and not as POC work. Any
+  implementation must be measured against a fixed-input clip set, not
+  reasoned about.
+
 ### Item 2 — voice cloning, concept test only
 
 **Goal: establish whether the concept works, not productise it.** Two fixed
